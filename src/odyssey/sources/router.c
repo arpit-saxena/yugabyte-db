@@ -995,6 +995,13 @@ od_router_status_t od_router_attach(od_router_t *router,
 		 "client_for_router logical client version = %d",
 		 client_for_router->yb_logical_client_version);
 
+	/*
+	 * YB: Can we spawn a new connection here if needed? In YB_GUC_ADOPTION_CONNECTION_STATIC
+	 * we sometimes can't spawn new connections and would have to wait for existing backends
+	 * with the required version to get idle
+	 */
+	bool yb_spawn_new_connection_if_needed = true;
+
 	for (;;) {
 		/*
 		 * YB: Do version matching if required, and don't do it for internal clients
@@ -1011,7 +1018,6 @@ od_router_status_t od_router_attach(od_router_t *router,
 			if (server)
 				goto attach;
 
-			/* TODO: What if there is an active server with the same version as client? */
 			int64_t max_logical_client_version = od_atomic_u64_of(
 				&router->yb_max_logical_client_version);
 			if (instance->config.yb_alter_guc_adoption_strategy ==
@@ -1019,20 +1025,30 @@ od_router_status_t od_router_attach(od_router_t *router,
 			    max_logical_client_version >
 				    client_for_router
 					    ->yb_logical_client_version) {
-				od_debug(
-					&instance->logger, "router-attach",
-					client_for_router, NULL,
-					"old logical client, need to disconect, max_logical_client_version"
-					" = %d, and version of client = %d",
-					max_logical_client_version,
-					client_for_router
-						->yb_logical_client_version);
-				od_route_unlock(route);
-				return OD_ROUTER_ERROR;
+				/*
+				 * We can't spawn a new connection, but wait if there
+				 * are active servers which have the same version
+				 */
+				yb_spawn_new_connection_if_needed = false;
+				if (!yb_od_server_pool_active_has_matching_version(
+					    &route->server_pool,
+					    client_for_router
+						    ->yb_logical_client_version)) {
+					od_debug(
+						&instance->logger,
+						"router-attach",
+						client_for_router, NULL,
+						"old logical client, need to disconect:"
+						"max_logical_client_version= %d, and version "
+						"of client = %d",
+						max_logical_client_version,
+						client_for_router
+							->yb_logical_client_version);
+					od_route_unlock(route);
+					return OD_ROUTER_ERROR;
+				}
 			}
-		}
-
-		else if (is_warmup_needed) {
+		} else if (is_warmup_needed) {
 			if (random_allot)
 				server = yb_od_server_pool_idle_random(&route->server_pool);
 			else /* round_robin allotment */
@@ -1056,7 +1072,8 @@ od_router_status_t od_router_attach(od_router_t *router,
 				od_route_unlock(route);
 				return OD_ROUTER_ERROR_TIMEDOUT;
 			}
-		} else {
+		} else if (yb_spawn_new_connection_if_needed) {
+			/* YB: Only come here if spawning a new connection is allowed */
 			/* Maybe start new connection, if pool_size is zero */
 			/* Maybe start new connection, if we still have capacity for it */
 			int connections_in_pool =
