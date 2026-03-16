@@ -995,14 +995,14 @@ od_router_status_t od_router_attach(od_router_t *router,
 		 "client_for_router logical client version = %d",
 		 client_for_router->yb_logical_client_version);
 
-	/*
-	 * YB: Can we spawn a new connection here if needed? In YB_GUC_ADOPTION_CONNECTION_STATIC
-	 * we sometimes can't spawn new connections and would have to wait for existing backends
-	 * with the required version to get idle
-	 */
-	bool yb_spawn_new_connection_if_needed = true;
-
 	for (;;) {
+		/*
+		 * YB: In YB_GUC_ADOPTION_CONNECTION_STATIC mode with an outdated client version,
+		 * we cannot spawn new connections (they would get the latest version). Instead,
+		 * we must wait for an existing backend with the matching version to become idle.
+		 */
+		bool yb_spawn_new_connection_if_needed = true;
+
 		/*
 		 * YB: Do version matching if required, and don't do it for internal clients
 		 * (used for authentication) since LCV doesn't make sense for them
@@ -1040,7 +1040,7 @@ od_router_status_t od_router_attach(od_router_t *router,
 						client_for_router, NULL,
 						"old logical client, need to disconnect: "
 						"max_logical_client_version= %" PRId64
-						", and version of client = " PRId64,
+						", and version of client = %" PRId64,
 						max_logical_client_version,
 						client_for_router
 							->yb_logical_client_version);
