@@ -992,7 +992,7 @@ od_router_status_t od_router_attach(od_router_t *router,
 	random_allot = is_warmup_needed && strcmp(is_warmup_needed_flag, "random") == 0;
 
 	od_debug(&instance->logger, "router-attach", client_for_router, NULL,
-		 "client_for_router logical client version = %d",
+		 "client_for_router logical client version = %" PRId64,
 		 client_for_router->yb_logical_client_version);
 
 	for (;;) {

@@ -207,7 +207,7 @@ yb_od_server_pool_active_has_matching_version(od_server_pool_t *pool,
 {
 	od_list_t *target = &pool->active;
 	od_server_t *server;
-	od_list_t *i, *n;
+	od_list_t *i;
 	od_list_foreach(target, i)
 	{
 		server = od_container_of(i, od_server_t, link);
