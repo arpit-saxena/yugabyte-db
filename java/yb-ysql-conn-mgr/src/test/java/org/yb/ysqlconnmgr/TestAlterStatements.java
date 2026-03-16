@@ -14,6 +14,7 @@ package org.yb.ysqlconnmgr;
 
 import static org.yb.AssertionWrappers.assertEquals;
 import static org.yb.AssertionWrappers.assertTrue;
+import static org.yb.AssertionWrappers.assertFalse;
 import static org.yb.AssertionWrappers.fail;
 
 import java.sql.Connection;
@@ -723,8 +724,8 @@ public class TestAlterStatements extends BaseYsqlConnMgr {
 
             assertTrue("BEGIN did not complete in time", beginDone.await(10, TimeUnit.SECONDS));
             assertTrue("SELECT was not issued in time", selectIssued.await(10, TimeUnit.SECONDS));
-            assertTrue("SELECT on conn2 unexpectedly returned while conn1 was holding backend",
-                    !selectDone.await(500, TimeUnit.MILLISECONDS));
+            assertFalse("SELECT on conn2 unexpectedly returned while conn1 was holding backend",
+                    selectDone.await(500, TimeUnit.MILLISECONDS));
 
             proceed.countDown();
 

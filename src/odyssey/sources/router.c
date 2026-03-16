@@ -1038,9 +1038,9 @@ od_router_status_t od_router_attach(od_router_t *router,
 						&instance->logger,
 						"router-attach",
 						client_for_router, NULL,
-						"old logical client, need to disconect:"
-						"max_logical_client_version= %d, and version "
-						"of client = %d",
+						"old logical client, need to disconnect: "
+						"max_logical_client_version= %" PRId64
+						", and version of client = " PRId64,
 						max_logical_client_version,
 						client_for_router
 							->yb_logical_client_version);
