@@ -2537,6 +2537,13 @@ retry1:
 			 * authentication.
 			 */
 			port->raddr.addr.ss_family = AF_INET;
+			/*
+			 * Free the previous remote_host allocated by strdup() in
+			 * BackendInitialize, but only when not in auth passthrough mode
+			 * (where the caller saves and restores the pointer).
+			 */
+			if (port->remote_host && !YbIsAuthPassthroughInProgress(port))
+				free(port->remote_host);
 			port->remote_host = yb_auth_backend_remote_host;
 
 			struct sockaddr_in *ip_address_1;
