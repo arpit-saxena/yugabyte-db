@@ -52,6 +52,14 @@ static inline void od_worker_pool_stop(od_worker_pool_t *pool)
 	}
 }
 
+static inline void od_worker_pool_stop_and_wait(od_worker_pool_t *pool)
+{
+	for (uint32_t i = 0; i < pool->count; i++) {
+		od_worker_t *worker = &pool->pool[i];
+		machine_stop_and_wait(worker->machine);
+	}
+}
+
 static inline void od_worker_pool_wait()
 {
 	machine_sleep(1);

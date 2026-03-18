@@ -103,10 +103,7 @@ od_attribute_noreturn() void od_system_shutdown(od_system_t *system,
 	// YB: Cleanup shmem after cron thread has stopped
 	yb_stats_shmem_cleanup(instance);
 
-	od_worker_pool_stop(worker_pool);
-
-	/* Prevent OpenSSL usage during deinitialization */
-	od_worker_pool_wait();
+	od_worker_pool_stop_and_wait(worker_pool);
 
 #ifdef OD_SYSTEM_SHUTDOWN_CLEANUP
 	od_router_free(system->global->router);

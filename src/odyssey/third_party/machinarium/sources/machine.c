@@ -163,6 +163,22 @@ MACHINE_API int machine_stop(uint64_t machine_id)
 	return 0;
 }
 
+MACHINE_API int machine_stop_and_wait(uint64_t machine_id)
+{
+	mm_machine_t *machine;
+	machine = mm_machinemgr_delete_by_id(&machinarium.machine_mgr,
+					     machine_id);
+	if (machine == NULL)
+		return -1;
+	atomic_store(&machine->online, 0);
+	int rc;
+	rc = mm_thread_join(&machine->thread);
+	if (machine->name)
+		free(machine->name);
+	free(machine);
+	return rc;
+}
+
 MACHINE_API int machine_active(void)
 {
 	return atomic_load(&mm_self->online);
