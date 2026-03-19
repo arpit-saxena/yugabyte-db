@@ -1,0 +1,123 @@
+================================================================================
+CONNECTION MANAGER TEST FAILURE ANALYSIS
+Tests run with: --enable-ysql-conn-mgr-test
+Date: 2026-03-19
+================================================================================
+
+================================================================================
+TEST 1: TestRelcacheUpdate#testRelcacheInitConnectionStress
+================================================================================
+
+Failures: 10 out of 10 iterations FAILED (100% failure rate)
+
+Two distinct failure modes observed:
+
+--- Failure Mode A: Connection successes mismatch (8 of 10 iterations) ---
+
+Error: java.lang.AssertionError: Total connection successes mismatch
+  at TestRelcacheUpdate.testRelcacheInitConnectionStress(TestRelcacheUpdate.java:738)
+
+The test expects all 200 concurrent connections (across multiple databases)
+to succeed, but a significant portion fail when routed through the
+connection manager (Odyssey).
+
+Per-iteration actual successes (expected: 200):
+  Iteration 1:  104 successes (96 failures)
+  Iteration 2:  166 successes (34 failures)
+  Iteration 3:  106 successes (94 failures)
+  Iteration 4:   64 successes (136 failures)
+  Iteration 5:  137 successes (63 failures)
+  Iteration 6:  143 successes (57 failures)
+  Iteration 7:  152 successes (48 failures)
+  Iteration 9:  180 successes (20 failures)
+
+Underlying error from logs:
+  "Exception while trying to create connection (after 1 attempts):
+   The connection attempt failed."
+  Connections fail to databases like test_db_4, test_db_5, etc.
+
+--- Failure Mode B: Tserver startup timeout (2 of 10 iterations) ---
+
+Error: java.lang.RuntimeException: Timed out waiting for a 'server starting'
+  message to appear. Waited for 60000.
+
+  Iteration 8:  Timed out on ts3 startup
+  Iteration 10: Timed out on ts3 startup
+
+The 3rd tablet server fails to start within the 60-second timeout,
+likely due to resource contention when running 3 tservers with
+connection manager enabled on the same host.
+
+ROOT CAUSE:
+The YSQL connection manager (Odyssey) cannot handle the burst of 200+
+concurrent connection attempts across multiple newly-created databases
+during relcache initialization stress. When many connections attempt to
+open simultaneously through the connection pooler, the pooler either
+drops connections or fails to route them. The test uses 3 tservers with
+3 masters (replication_factor=3) and connection manager is enabled
+(--enable_ysql_conn_mgr=true) on each tserver. Under this concurrent
+load, the connection manager's pool becomes saturated and new connection
+attempts fail with "The connection attempt failed." This is a connection
+manager capacity/throughput issue under concurrent stress, not a
+functional correctness issue.
+
+================================================================================
+TEST 2: TestPgStatStatements#testDeleteRpcStats
+================================================================================
+
+Failures: 3 out of 10 iterations FAILED (30% failure rate, flaky)
+  Failed iterations: 5, 7, 9
+  Passed iterations: 1, 2, 3, 4, 6, 8, 10
+
+Error: java.lang.AssertionError: expected:<3> but was:<2>
+  at TestPgStatStatements.verifyMetrics(TestPgStatStatements.java:191)
+  at TestPgStatStatements.testDeleteRpcStats(TestPgStatStatements.java:447)
+
+Stack trace:
+  java.lang.AssertionError: expected:<3> but was:<2>
+    at org.junit.Assert.assertEquals(Assert.java:647)
+    at org.yb.AssertionWrappers.assertEquals(AssertionWrappers.java:581)
+    at org.yb.pgsql.TestPgStatStatements.verifyMetrics(TestPgStatStatements.java:191)
+    at org.yb.pgsql.TestPgStatStatements.testDeleteRpcStats(TestPgStatStatements.java:447)
+
+The failure is at line 191 in verifyMetrics(), which asserts:
+  assertEquals(expectedDocdbSeeks, readMetrics.seeks + writeMetrics.seeks)
+
+The test expects 3 total docdb seeks (read + write) for a DELETE query,
+but only observes 2 seeks. From the logs:
+  - Expected: Docdb Seeks=3, Docdb Nexts=3, Docdb Prevs=0
+  - Actual read metrics:  rocksdb_number_db_seek=1, rocksdb_number_db_next=1
+  - Actual write metrics: rocksdb_number_db_seek=1, rocksdb_number_db_next=1
+  - Total actual seeks: 1+1 = 2 (expected 3)
+
+ROOT CAUSE:
+When the connection manager is enabled, connections are pooled and reused
+via Odyssey. The pg_stat_statements metrics are accumulated per-backend,
+and with connection pooling, the DELETE statement that the test runs to
+establish "expected" metric values and the subsequent verification DELETE
+may execute on different physical backends. This causes the metrics to
+diverge: the first DELETE's accumulated stats (used as the "expected"
+baseline) are on one backend, while the verification DELETE runs on
+another backend that starts with a clean state, producing fewer seeks
+(2 instead of 3). The missing seek is likely a catalog/index seek that
+happens on first execution in a backend but gets cached on subsequent
+executions. With connection pooling, the verification query can land on
+a different backend that has different cached state, leading to a
+one-seek discrepancy. This is an intermittent issue (30% failure rate)
+because sometimes both queries happen to land on the same backend.
+
+================================================================================
+SUMMARY
+================================================================================
+
+Both failures are caused by the connection manager (Odyssey) changing
+connection behavior compared to direct PostgreSQL connections:
+
+1. TestRelcacheUpdate: Connection manager cannot sustain 200 concurrent
+   connection bursts across multiple databases, dropping connections.
+   (100% failure rate - systemic)
+
+2. TestPgStatStatements: Connection pooling causes pg_stat_statements
+   metrics to be inconsistent because queries may execute on different
+   physical backends, leading to metric count mismatches.
+   (30% failure rate - flaky/intermittent)
