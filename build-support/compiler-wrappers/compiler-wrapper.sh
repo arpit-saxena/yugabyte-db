@@ -598,7 +598,9 @@ local_build_exit_handler() {
     if [[ -e $output_file ]]; then
       touch "$output_file"
     else
-      log "Warning: was supposed to create an output file '$output_file', but it does not exist."
+      log "Error: compiler exited with code 0 but the expected output file '$output_file'" \
+          "does not exist. Returning exit code 1 to the caller."
+      exit_code=1
     fi
   fi
   if [[ $exit_code -ne 0 && -f $output_file ]] && "$delete_output_file_on_failure"; then
