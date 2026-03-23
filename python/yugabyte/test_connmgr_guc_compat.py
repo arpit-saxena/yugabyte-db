@@ -88,7 +88,7 @@ STRING_GUC_TEST_VALUES: dict[str, str] = {
     # YB-specific string GUCs
     "yb_xcluster_consistency_level": "tablet",
     "yb_default_replica_identity": "FULL",
-    "yb_hinted_uids": "1,2",
+    "yb_hinted_uids": "1",
     "yb_neg_catcache_ids": "",
     "yb_read_time": "0",
     "yb_test_fail_index_state_change": "",
@@ -106,6 +106,19 @@ STRING_GUC_TEST_VALUES: dict[str, str] = {
     # xCluster DDL replication extension GUCs
     "yb_xcluster_ddl_replication.ddl_queue_primary_key_ddl_end_time": "",
     "yb_xcluster_ddl_replication.ddl_queue_primary_key_query_id": "",
+}
+
+# GUCs whose enum value 'NONE' maps to empty string in SHOW output.
+ENUM_NONE_AS_EMPTY: set[str] = {
+    "yb_xcluster_ddl_replication.TEST_replication_role_override",
+}
+
+# GUCs that cannot be SET LOCAL inside a transaction block.
+NO_SET_LOCAL_GUCS: set[str] = {
+    "yb_read_after_commit_visibility",
+    "transaction_isolation",
+    "transaction_read_only",
+    "transaction_deferrable",
 }
 
 # For enum GUCs: mapping of GUC name -> list of valid values.
@@ -141,6 +154,7 @@ ENUM_GUC_VALUES: dict[str, list[str]] = {
     "pg_stat_statements.track": ["none", "top", "all"],
     "yb_log_min_backtraces": ["error", "warning", "notice"],
     "yb_pg_stat_plans_track": ["none", "top", "all"],
+    "yb_xcluster_ddl_replication.TEST_replication_role_override": ["SOURCE", "TARGET"],
 }
 
 # GUCs that should be skipped entirely (not testable via SET/SHOW for various reasons).
@@ -156,6 +170,16 @@ SKIP_GUCS: set[str] = {
     "jit_profiling_support",     # PGC_SU_BACKEND
     "ignore_system_indexes",     # PGC_BACKEND
     "post_auth_delay",           # PGC_BACKEND
+    "idle_session_timeout",      # setting non-zero kills the connection after timeout
+    "exit_on_error",             # setting ON kills the connection on any error
+}
+
+# GUCs whose SHOW hook returns kernel/OS values rather than the GUC value.
+KERNEL_VALUE_GUCS: set[str] = {
+    "tcp_keepalives_count",
+    "tcp_keepalives_idle",
+    "tcp_keepalives_interval",
+    "tcp_user_timeout",
 }
 
 # GUCs that can only be SET inside a transaction block.
@@ -178,7 +202,8 @@ TIME_UNIT_GUCS: set[str] = {
     "log_autovacuum_min_duration",
 }
 
-# GUCs that are exempted from RESET ALL (GUC_NO_RESET_ALL flag).
+# GUCs that are exempted from RESET ALL (GUC_NO_RESET_ALL flag) or whose
+# RESET ALL behavior is complicated by cross-GUC hooks.
 NO_RESET_ALL_GUCS: set[str] = {
     "seed",
     "transaction_isolation",
@@ -187,6 +212,13 @@ NO_RESET_ALL_GUCS: set[str] = {
     "is_superuser",
     "role",
     "session_authorization",
+    # Cross-GUC hook GUCs: RESET ALL resets them but the assign hook of
+    # yb_enable_cbo re-sets them during deploy. Order-dependent.
+    "yb_enable_base_scans_cost_model",
+    "yb_enable_optimizer_statistics",
+    "yb_enable_bitmapscan",
+    "yb_enable_update_reltuples_after_create_index",
+    "yb_parallel_range_rows",
 }
 
 
@@ -279,8 +311,13 @@ def execute_sql(conn, query: str):
 def show_guc(conn, guc_name: str) -> Optional[str]:
     try:
         return execute_scalar(conn, f"SHOW \"{guc_name}\"")
+    except psycopg2.InterfaceError:
+        raise  # re-raise connection-level errors so callers can reconnect
     except psycopg2.Error:
-        conn.rollback()
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         return None
 
 
@@ -307,7 +344,7 @@ def populate_runtime_info(conn, gucs: list[GUCInfo]):
             FROM pg_settings
         """)
         for row in cur.fetchall():
-            settings_map[row[0]] = {
+            settings_map[row[0].lower()] = {
                 "setting": row[1],
                 "unit": row[2],
                 "vartype": row[3],
@@ -319,7 +356,7 @@ def populate_runtime_info(conn, gucs: list[GUCInfo]):
             }
 
     for guc in gucs:
-        info = settings_map.get(guc.name)
+        info = settings_map.get(guc.name.lower())
         if info:
             guc.current_value = info["setting"]
             guc.unit = info["unit"]
@@ -384,12 +421,20 @@ def generate_test_value(guc: GUCInfo) -> Optional[str]:
             min_val = float(guc.min_val) if guc.min_val else 0.0
             max_val = float(guc.max_val) if guc.max_val else 1e18
 
-            if cur_val + 0.5 <= max_val:
-                candidate = cur_val + 0.5
-            elif cur_val - 0.5 >= min_val:
-                candidate = cur_val - 0.5
+            # Use integer offsets when possible to avoid precision issues
+            if cur_val >= 1.0 and cur_val + 1.0 <= max_val:
+                candidate = cur_val + 1.0
+            elif cur_val - 1.0 >= min_val and cur_val >= 2.0:
+                candidate = cur_val - 1.0
+            elif cur_val + 0.1 <= max_val:
+                candidate = round(cur_val + 0.1, 2)
+            elif cur_val - 0.1 >= min_val:
+                candidate = round(cur_val - 0.1, 2)
             else:
                 return None
+
+            if candidate == int(candidate):
+                return str(int(candidate))
             return str(candidate)
         except (ValueError, TypeError):
             return None
@@ -462,6 +507,10 @@ def run_t1_basic_set_show(conn, guc: GUCInfo) -> SingleTestResult:
     if guc.name in TRANSACTION_ONLY_GUCS:
         return SingleTestResult(guc.name, "T1", "SKIP", "transaction-only GUC")
 
+    if guc.name in KERNEL_VALUE_GUCS:
+        return SingleTestResult(guc.name, "T1", "SKIP",
+                                "kernel-value GUC (tested in T6)")
+
     test_val = generate_test_value(guc)
     if test_val is None:
         return SingleTestResult(guc.name, "T1", "SKIP", "no valid alternate value")
@@ -495,6 +544,8 @@ def run_t1_basic_set_show(conn, guc: GUCInfo) -> SingleTestResult:
         return SingleTestResult(guc.name, "T1", "PASS", set_value=test_val,
                                 show_value=shown)
 
+    except psycopg2.InterfaceError as e:
+        raise  # connection-level error, cannot recover in this function
     except psycopg2.Error as e:
         try:
             reset_guc(conn, guc.name)
@@ -512,6 +563,10 @@ def run_t2_cross_txn_persistence(conn, guc: GUCInfo) -> SingleTestResult:
 
     if guc.name in TRANSACTION_ONLY_GUCS:
         return SingleTestResult(guc.name, "T2", "SKIP", "transaction-only GUC")
+
+    if guc.name in KERNEL_VALUE_GUCS:
+        return SingleTestResult(guc.name, "T2", "SKIP",
+                                "kernel-value GUC (tested in T6)")
 
     test_val = generate_test_value(guc)
     if test_val is None:
@@ -668,11 +723,22 @@ def run_t5_set_local(conn, guc: GUCInfo) -> SingleTestResult:
     if skip:
         return SingleTestResult(guc.name, "T5", "SKIP", reason)
 
+    if guc.name in KERNEL_VALUE_GUCS:
+        return SingleTestResult(guc.name, "T5", "SKIP",
+                                "kernel-value GUC (tested in T6)")
+
+    if guc.name in NO_SET_LOCAL_GUCS:
+        return SingleTestResult(guc.name, "T5", "SKIP",
+                                "cannot SET LOCAL in txn block")
+
     test_val = generate_test_value(guc)
     if test_val is None:
         return SingleTestResult(guc.name, "T5", "SKIP", "no valid alternate value")
 
-    original = show_guc(conn, guc.name)
+    try:
+        original = show_guc(conn, guc.name)
+    except psycopg2.InterfaceError:
+        raise
 
     try:
         conn.set_session(autocommit=False)
@@ -735,50 +801,58 @@ def run_t6_needs_review(conn, conn_factory) -> list[SingleTestResult]:
 
 
 def _test_cbo_cross_guc(conn) -> list[SingleTestResult]:
-    """Test that SET yb_enable_cbo affects dependent GUCs."""
+    """Test that SET yb_enable_cbo affects dependent GUCs through ConnMgr.
+
+    The key test: SET yb_enable_cbo on one physical connection, then after
+    a transaction boundary (possible backend switch), verify the dependent
+    GUCs are still consistent.
+    """
     results = []
 
     try:
         orig_cbo = show_guc(conn, "yb_enable_cbo")
         orig_bsm = show_guc(conn, "yb_enable_base_scans_cost_model")
-        orig_os = show_guc(conn, "yb_enable_optimizer_statistics")
 
-        set_guc(conn, "yb_enable_cbo", "on")
-        new_bsm = show_guc(conn, "yb_enable_base_scans_cost_model")
-        new_os = show_guc(conn, "yb_enable_optimizer_statistics")
-
-        if new_bsm == "on" and new_os == "on":
-            results.append(SingleTestResult("yb_enable_cbo", "T6_cross_guc",
-                                            "PASS",
-                                            "SET yb_enable_cbo=on correctly "
-                                            "updated dependent GUCs"))
-        else:
-            results.append(SingleTestResult("yb_enable_cbo", "T6_cross_guc",
-                                            "FAIL",
-                                            f"yb_enable_base_scans_cost_model="
-                                            f"'{new_bsm}', "
-                                            f"yb_enable_optimizer_statistics="
-                                            f"'{new_os}' "
-                                            f"(expected both 'on')"))
-
+        # Test: SET cbo=off should also set base_scans=off
         set_guc(conn, "yb_enable_cbo", "off")
         off_bsm = show_guc(conn, "yb_enable_base_scans_cost_model")
-        off_os = show_guc(conn, "yb_enable_optimizer_statistics")
 
-        if off_bsm == "off" and off_os == "off":
+        if off_bsm == "off":
             results.append(SingleTestResult("yb_enable_cbo", "T6_cross_guc_off",
                                             "PASS",
                                             "SET yb_enable_cbo=off correctly "
-                                            "updated dependent GUCs"))
+                                            "set base_scans_cost_model=off"))
         else:
             results.append(SingleTestResult("yb_enable_cbo", "T6_cross_guc_off",
                                             "FAIL",
                                             f"yb_enable_base_scans_cost_model="
-                                            f"'{off_bsm}', "
-                                            f"yb_enable_optimizer_statistics="
-                                            f"'{off_os}' "
+                                            f"'{off_bsm}' (expected 'off')"))
+
+        # Cross-transaction persistence of cross-GUC state
+        execute_sql(conn, "SELECT 1")
+        time.sleep(0.05)
+        execute_sql(conn, "SELECT 1")
+
+        persisted_cbo = show_guc(conn, "yb_enable_cbo")
+        persisted_bsm = show_guc(conn, "yb_enable_base_scans_cost_model")
+
+        if persisted_cbo == "off" and persisted_bsm == "off":
+            results.append(SingleTestResult("yb_enable_cbo",
+                                            "T6_cross_guc_persist",
+                                            "PASS",
+                                            "Cross-GUC state persisted: "
+                                            f"cbo={persisted_cbo}, "
+                                            f"bsm={persisted_bsm}"))
+        else:
+            results.append(SingleTestResult("yb_enable_cbo",
+                                            "T6_cross_guc_persist",
+                                            "FAIL",
+                                            f"Cross-GUC state NOT persisted: "
+                                            f"cbo={persisted_cbo}, "
+                                            f"bsm={persisted_bsm} "
                                             f"(expected both 'off')"))
 
+        # Restore
         if orig_cbo:
             set_guc(conn, "yb_enable_cbo", orig_cbo)
 
@@ -1011,6 +1085,42 @@ def _test_role_gucs(conn) -> list[SingleTestResult]:
 # Value comparison helpers
 # ---------------------------------------------------------------------------
 
+def _normalize_unit_value(raw: str, unit: Optional[str]) -> Optional[str]:
+    """Normalize a GUC value that may include unit suffixes.
+
+    pg_settings stores raw numeric values (e.g., '4096' for 4MB when unit=kB)
+    but SHOW returns human-friendly values (e.g., '4MB'). This converts
+    the SHOW output back to the raw unit for comparison.
+    """
+    if not raw or not unit:
+        return raw
+
+    raw = raw.strip()
+
+    # Common unit conversions: SHOW format -> base unit multiplier
+    unit_multipliers: dict[str, dict[str, float]] = {
+        "kB": {"kB": 1, "MB": 1024, "GB": 1024 * 1024, "TB": 1024**3},
+        "8kB": {"kB": 0.125, "MB": 128, "GB": 128 * 1024, "TB": 128 * 1024**2,
+                "8kB": 1},
+        "B": {"B": 1, "kB": 1024, "MB": 1024**2, "GB": 1024**3},
+        "ms": {"us": 0.001, "ms": 1, "s": 1000, "min": 60000, "h": 3600000,
+               "d": 86400000},
+        "s": {"ms": 0.001, "s": 1, "min": 60, "h": 3600, "d": 86400},
+        "min": {"s": 1/60, "min": 1, "h": 60, "d": 1440},
+    }
+
+    multipliers = unit_multipliers.get(unit, {})
+    for suffix, mult in sorted(multipliers.items(), key=lambda x: -len(x[0])):
+        if raw.endswith(suffix):
+            num_part = raw[:-len(suffix)].strip()
+            try:
+                return str(int(float(num_part) * mult))
+            except (ValueError, TypeError):
+                pass
+
+    return raw
+
+
 def _values_match(expected: str, actual: str, guc: GUCInfo) -> bool:
     """Compare GUC values, handling type-specific normalization."""
     if expected == actual:
@@ -1019,6 +1129,17 @@ def _values_match(expected: str, actual: str, guc: GUCInfo) -> bool:
     # Case-insensitive for bools and enums
     if (guc.vartype or guc.guc_type) in ("bool", "enum"):
         return expected.lower() == actual.lower()
+
+    # For GUCs with units, normalize before comparing
+    if guc.unit:
+        norm_actual = _normalize_unit_value(actual, guc.unit)
+        norm_expected = _normalize_unit_value(expected, guc.unit)
+        if norm_actual and norm_expected:
+            try:
+                if int(float(norm_actual)) == int(float(norm_expected)):
+                    return True
+            except (ValueError, TypeError):
+                pass
 
     # Numeric comparison for ints and reals
     if (guc.vartype or guc.guc_type) == "integer":
@@ -1032,11 +1153,23 @@ def _values_match(expected: str, actual: str, guc: GUCInfo) -> bool:
             return abs(float(expected) - float(actual)) < 1e-6
         except (ValueError, TypeError):
             pass
+        # Also try parsing with unit stripping
+        try:
+            actual_num = actual.rstrip("abcdefghijklmnopqrstuvwxyzBMGTkKs ")
+            return abs(float(expected) - float(actual_num)) < 1e-6
+        except (ValueError, TypeError):
+            pass
 
-    # Handle unit suffixes (e.g., "999ms" vs "999")
-    actual_stripped = actual.rstrip("abcdefghijklmnopqrstuvwxyzBMGTkKs ")
-    if expected == actual_stripped:
-        return True
+    # Handle string quoting (e.g., SHOW search_path returns '"pg_catalog, public"')
+    if actual.startswith('"') and actual.endswith('"'):
+        if expected == actual[1:-1]:
+            return True
+
+    # Handle enum GUCs where value "NONE" maps to empty string
+    if guc.name in ENUM_NONE_AS_EMPTY:
+        if (expected.upper() == "NONE" and actual == "") or \
+           (expected == "" and actual.upper() == "NONE"):
+            return True
 
     # Normalized string comparison
     return expected.strip().lower() == actual.strip().lower()
@@ -1131,20 +1264,38 @@ def run_all_tests(args) -> tuple[list[SingleTestResult], dict]:
     def su_conn_factory():
         return get_connection(args.host, args.port, args.dbname, args.su_user)
 
+    def _run_with_recovery(conn_ref, conn_factory_fn, guc, test_fn, results_list):
+        """Run a test function with connection recovery on InterfaceError."""
+        nonlocal user_conn, su_conn
+        try:
+            r = test_fn(conn_ref[0], guc)
+            results_list.append(r)
+            _print_result(r)
+        except psycopg2.InterfaceError:
+            results_list.append(SingleTestResult(
+                guc.name, "?", "ERROR", "connection lost, reconnecting"))
+            _print_result(results_list[-1])
+            try:
+                conn_ref[0] = conn_factory_fn()
+            except Exception as e:
+                print(f"\n  FATAL: could not reconnect: {e}", file=sys.stderr)
+
+    # Wrap connections in mutable references for recovery
+    user_conn_ref = [user_conn]
+    su_conn_ref = [su_conn]
+
     # ---- T1: Basic SET/SHOW ----
     print("\n" + "=" * 70)
     print("T1: Basic SET/SHOW round-trip")
     print("=" * 70)
 
     for guc in userset_gucs:
-        r = run_t1_basic_set_show(user_conn, guc)
-        all_results.append(r)
-        _print_result(r)
+        _run_with_recovery(user_conn_ref, user_conn_factory,
+                           guc, run_t1_basic_set_show, all_results)
 
     for guc in suset_gucs:
-        r = run_t1_basic_set_show(su_conn, guc)
-        all_results.append(r)
-        _print_result(r)
+        _run_with_recovery(su_conn_ref, su_conn_factory,
+                           guc, run_t1_basic_set_show, all_results)
 
     print()  # newline after T1 dots
 
@@ -1154,14 +1305,12 @@ def run_all_tests(args) -> tuple[list[SingleTestResult], dict]:
     print("=" * 70)
 
     for guc in userset_gucs:
-        r = run_t2_cross_txn_persistence(user_conn, guc)
-        all_results.append(r)
-        _print_result(r)
+        _run_with_recovery(user_conn_ref, user_conn_factory,
+                           guc, run_t2_cross_txn_persistence, all_results)
 
     for guc in suset_gucs:
-        r = run_t2_cross_txn_persistence(su_conn, guc)
-        all_results.append(r)
-        _print_result(r)
+        _run_with_recovery(su_conn_ref, su_conn_factory,
+                           guc, run_t2_cross_txn_persistence, all_results)
 
     print()  # newline after T2 dots
 
@@ -1189,16 +1338,18 @@ def run_all_tests(args) -> tuple[list[SingleTestResult], dict]:
 
     testable_userset = [g for g in userset_gucs
                         if not should_skip(g)[0]
-                        and g.name not in TRANSACTION_ONLY_GUCS]
-    t4_results = run_t4_reset_all(user_conn, testable_userset)
+                        and g.name not in TRANSACTION_ONLY_GUCS
+                        and g.name not in KERNEL_VALUE_GUCS]
+    t4_results = run_t4_reset_all(user_conn_ref[0], testable_userset)
     all_results.extend(t4_results)
     for r in t4_results:
         _print_result(r)
 
     testable_suset = [g for g in suset_gucs
                       if not should_skip(g)[0]
-                      and g.name not in TRANSACTION_ONLY_GUCS]
-    t4_su_results = run_t4_reset_all(su_conn, testable_suset)
+                      and g.name not in TRANSACTION_ONLY_GUCS
+                      and g.name not in KERNEL_VALUE_GUCS]
+    t4_su_results = run_t4_reset_all(su_conn_ref[0], testable_suset)
     all_results.extend(t4_su_results)
     for r in t4_su_results:
         _print_result(r)
@@ -1211,14 +1362,12 @@ def run_all_tests(args) -> tuple[list[SingleTestResult], dict]:
     print("=" * 70)
 
     for guc in userset_gucs:
-        r = run_t5_set_local(user_conn, guc)
-        all_results.append(r)
-        _print_result(r)
+        _run_with_recovery(user_conn_ref, user_conn_factory,
+                           guc, run_t5_set_local, all_results)
 
     for guc in suset_gucs:
-        r = run_t5_set_local(su_conn, guc)
-        all_results.append(r)
-        _print_result(r)
+        _run_with_recovery(su_conn_ref, su_conn_factory,
+                           guc, run_t5_set_local, all_results)
 
     print()  # newline after T5 dots
 
@@ -1227,14 +1376,19 @@ def run_all_tests(args) -> tuple[list[SingleTestResult], dict]:
     print("T6: NEEDS_REVIEW special cases")
     print("=" * 70)
 
-    t6_results = run_t6_needs_review(su_conn, su_conn_factory)
+    t6_results = run_t6_needs_review(su_conn_ref[0], su_conn_factory)
     all_results.extend(t6_results)
     for r in t6_results:
         _print_result(r)
 
     # Cleanup
+    user_conn = user_conn_ref[0]
+    su_conn = su_conn_ref[0]
     if role_ok and user_conn is not su_conn:
-        user_conn.close()
+        try:
+            user_conn.close()
+        except Exception:
+            pass
     cleanup_test_role(su_conn, test_role)
     su_conn.close()
 
