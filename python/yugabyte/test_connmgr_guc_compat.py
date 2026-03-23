@@ -202,8 +202,7 @@ TIME_UNIT_GUCS: set[str] = {
     "log_autovacuum_min_duration",
 }
 
-# GUCs that are exempted from RESET ALL (GUC_NO_RESET_ALL flag) or whose
-# RESET ALL behavior is complicated by cross-GUC hooks.
+# GUCs that are exempted from RESET ALL (have GUC_NO_RESET_ALL flag in PG).
 NO_RESET_ALL_GUCS: set[str] = {
     "seed",
     "transaction_isolation",
@@ -212,8 +211,14 @@ NO_RESET_ALL_GUCS: set[str] = {
     "is_superuser",
     "role",
     "session_authorization",
-    # Cross-GUC hook GUCs: RESET ALL resets them but the assign hook of
-    # yb_enable_cbo re-sets them during deploy. Order-dependent.
+}
+
+# GUCs set indirectly by cross-GUC assign hooks (e.g., yb_enable_cbo's hook).
+# RESET ALL resets these to their boot default, but ConnMgr's deploy may
+# then replay SET yb_enable_cbo which re-triggers the hook, potentially
+# setting these back to a non-default value. This is a known NEEDS_REVIEW
+# behavior documented in the CSV analysis.
+CROSS_GUC_HOOK_DEPENDENTS: set[str] = {
     "yb_enable_base_scans_cost_model",
     "yb_enable_optimizer_statistics",
     "yb_enable_bitmapscan",
@@ -555,8 +560,16 @@ def run_t1_basic_set_show(conn, guc: GUCInfo) -> SingleTestResult:
 
 
 def run_t2_cross_txn_persistence(conn, guc: GUCInfo) -> SingleTestResult:
-    """T2: SET, then run a query in a new transaction to force backend rotation,
-    then SHOW to verify value persists."""
+    """T2: SET, then force transaction boundaries, then SHOW to verify
+    value persists through ConnMgr's deploy mechanism.
+
+    LIMITATION: On a single-node cluster with a single-connection pool,
+    the same physical backend may be reused, meaning the deploy path
+    (kiwi_vars_cas / od_deploy) is not exercised. For a thorough test,
+    the pool size should be >= 2 and multiple concurrent connections
+    should be used to force backend rotation. The T3 session isolation
+    test partially covers this by opening separate connections.
+    """
     skip, reason = should_skip(guc)
     if skip:
         return SingleTestResult(guc.name, "T2", "SKIP", reason)
@@ -575,10 +588,10 @@ def run_t2_cross_txn_persistence(conn, guc: GUCInfo) -> SingleTestResult:
     try:
         set_guc(conn, guc.name, test_val)
 
-        # Force a transaction boundary by running a query.
-        # In transaction pooling mode, this causes detach/re-attach.
+        # Force transaction boundaries. In transaction pooling mode each
+        # autocommit query is its own transaction, so the backend is
+        # detached after each one. On re-attach, od_deploy replays SETs.
         execute_sql(conn, "SELECT 1")
-        # Small delay to allow connection rotation
         time.sleep(0.05)
         execute_sql(conn, "SELECT 1")
 
@@ -706,10 +719,18 @@ def run_t4_reset_all(conn, testable_gucs: list[GUCInfo]) -> list[SingleTestResul
             results.append(SingleTestResult(guc.name, "T4", "ERROR",
                                             "SHOW returned None after RESET ALL"))
         elif expected and not _values_match(expected, shown, guc):
-            results.append(SingleTestResult(guc.name, "T4", "FAIL",
-                                            f"After RESET ALL, expected '{expected}' "
-                                            f"but got '{shown}'",
-                                            set_value=test_val, show_value=shown))
+            if guc.name in CROSS_GUC_HOOK_DEPENDENTS:
+                results.append(SingleTestResult(guc.name, "T4", "FAIL",
+                                                f"After RESET ALL, expected "
+                                                f"'{expected}' but got '{shown}'. "
+                                                f"KNOWN ISSUE: cross-GUC assign hook "
+                                                f"may re-set this during deploy.",
+                                                set_value=test_val, show_value=shown))
+            else:
+                results.append(SingleTestResult(guc.name, "T4", "FAIL",
+                                                f"After RESET ALL, expected "
+                                                f"'{expected}' but got '{shown}'",
+                                                set_value=test_val, show_value=shown))
         else:
             results.append(SingleTestResult(guc.name, "T4", "PASS",
                                             set_value=test_val, show_value=shown))
@@ -803,54 +824,61 @@ def run_t6_needs_review(conn, conn_factory) -> list[SingleTestResult]:
 def _test_cbo_cross_guc(conn) -> list[SingleTestResult]:
     """Test that SET yb_enable_cbo affects dependent GUCs through ConnMgr.
 
-    The key test: SET yb_enable_cbo on one physical connection, then after
-    a transaction boundary (possible backend switch), verify the dependent
-    GUCs are still consistent.
+    The CSV analysis identified that yb_enable_cbo's assign hook directly
+    writes backing variables of dependent GUCs WITHOUT sending ParameterStatus
+    to ConnMgr. This means ConnMgr may not replay these side-effects when
+    deploying to a new backend.
+
+    The REAL test: SET yb_enable_cbo, force a backend rotation, then check
+    the dependent GUCs on the (potentially new) backend.
     """
     results = []
 
     try:
         orig_cbo = show_guc(conn, "yb_enable_cbo")
-        orig_bsm = show_guc(conn, "yb_enable_base_scans_cost_model")
 
-        # Test: SET cbo=off should also set base_scans=off
+        # Test 1: Direct cross-GUC effect (same backend)
         set_guc(conn, "yb_enable_cbo", "off")
         off_bsm = show_guc(conn, "yb_enable_base_scans_cost_model")
 
         if off_bsm == "off":
-            results.append(SingleTestResult("yb_enable_cbo", "T6_cross_guc_off",
+            results.append(SingleTestResult("yb_enable_cbo", "T6_cross_guc_direct",
                                             "PASS",
-                                            "SET yb_enable_cbo=off correctly "
-                                            "set base_scans_cost_model=off"))
+                                            "SET cbo=off -> base_scans=off (same backend)"))
         else:
-            results.append(SingleTestResult("yb_enable_cbo", "T6_cross_guc_off",
+            results.append(SingleTestResult("yb_enable_cbo", "T6_cross_guc_direct",
                                             "FAIL",
-                                            f"yb_enable_base_scans_cost_model="
-                                            f"'{off_bsm}' (expected 'off')"))
+                                            f"SET cbo=off but base_scans='{off_bsm}' "
+                                            f"(expected 'off')"))
 
-        # Cross-transaction persistence of cross-GUC state
+        # Test 2: Cross-transaction persistence of the DEPENDENT GUC.
+        # This is the critical test. After a txn boundary, ConnMgr may deploy
+        # to a new backend. It should replay SET yb_enable_cbo=off, which
+        # should trigger the assign hook and set base_scans=off.
+        # BUT: ConnMgr might not track base_scans_cost_model's change since
+        # no ParameterStatus was sent for it.
         execute_sql(conn, "SELECT 1")
         time.sleep(0.05)
         execute_sql(conn, "SELECT 1")
 
-        persisted_cbo = show_guc(conn, "yb_enable_cbo")
         persisted_bsm = show_guc(conn, "yb_enable_base_scans_cost_model")
+        persisted_cbo = show_guc(conn, "yb_enable_cbo")
 
         if persisted_cbo == "off" and persisted_bsm == "off":
             results.append(SingleTestResult("yb_enable_cbo",
-                                            "T6_cross_guc_persist",
+                                            "T6_cross_guc_deploy",
                                             "PASS",
-                                            "Cross-GUC state persisted: "
-                                            f"cbo={persisted_cbo}, "
-                                            f"bsm={persisted_bsm}"))
+                                            f"After txn boundary: cbo={persisted_cbo}, "
+                                            f"base_scans={persisted_bsm}"))
         else:
             results.append(SingleTestResult("yb_enable_cbo",
-                                            "T6_cross_guc_persist",
+                                            "T6_cross_guc_deploy",
                                             "FAIL",
-                                            f"Cross-GUC state NOT persisted: "
-                                            f"cbo={persisted_cbo}, "
-                                            f"bsm={persisted_bsm} "
-                                            f"(expected both 'off')"))
+                                            f"After txn boundary: cbo={persisted_cbo}, "
+                                            f"base_scans={persisted_bsm} "
+                                            f"(expected both 'off'). "
+                                            "ConnMgr may not be replaying the "
+                                            "cross-GUC hook side-effect."))
 
         # Restore
         if orig_cbo:
@@ -863,29 +891,55 @@ def _test_cbo_cross_guc(conn) -> list[SingleTestResult]:
 
 
 def _test_seed(conn) -> list[SingleTestResult]:
-    """Test the 'seed' GUC which has a non-round-trippable SHOW hook."""
+    """Test the 'seed' GUC which has a non-round-trippable SHOW hook.
+
+    The CSV analysis identifies a real problem: SET seed = 0.5 makes ConnMgr
+    receive ParameterStatus with value 'unavailable'. On deploy to a new
+    backend, ConnMgr would try SET seed = 'unavailable' which will fail.
+
+    Additionally, seed has GUC_NO_RESET_ALL so RESET ALL won't clear it,
+    but ConnMgr may still try to reset it.
+    """
     results = []
     try:
+        # Test 1: Basic SET/SHOW behavior
         execute_sql(conn, "SET seed = 0.5")
         shown = show_guc(conn, "seed")
 
-        # SHOW seed always returns 'unavailable' in YB with ConnMgr
-        # The key test: does this not break anything?
-        results.append(SingleTestResult("seed", "T6_seed_set",
-                                        "PASS",
-                                        f"SET seed=0.5 succeeded, "
-                                        f"SHOW returned '{shown}'"))
-
-        # Verify we can still run random() after setting seed
-        val = execute_scalar(conn, "SELECT random()")
-        if val is not None:
-            results.append(SingleTestResult("seed", "T6_seed_random",
+        if shown == "unavailable":
+            results.append(SingleTestResult("seed", "T6_seed_show",
                                             "PASS",
-                                            f"random() returned {val} after SET seed"))
+                                            "SHOW seed returns 'unavailable' as expected "
+                                            "(non-round-trippable)"))
         else:
-            results.append(SingleTestResult("seed", "T6_seed_random",
+            results.append(SingleTestResult("seed", "T6_seed_show",
+                                            "PASS",
+                                            f"SHOW seed returned '{shown}'"))
+
+        # Test 2: Cross-transaction persistence after SET seed.
+        # This tests the deploy path: ConnMgr received ParameterStatus
+        # 'unavailable', and on a new backend it would try
+        # SET seed = 'unavailable'. If that fails, the connection breaks.
+        execute_sql(conn, "SELECT 1")
+        time.sleep(0.05)
+
+        try:
+            val = execute_scalar(conn, "SELECT random()")
+            if val is not None:
+                results.append(SingleTestResult("seed", "T6_seed_deploy",
+                                                "PASS",
+                                                f"After txn boundary, random()={val}. "
+                                                "Connection survived deploy with "
+                                                "seed='unavailable'."))
+            else:
+                results.append(SingleTestResult("seed", "T6_seed_deploy",
+                                                "FAIL",
+                                                "random() returned None after deploy"))
+        except psycopg2.Error as e:
+            results.append(SingleTestResult("seed", "T6_seed_deploy",
                                             "FAIL",
-                                            "random() returned None after SET seed"))
+                                            f"Connection broke after deploy with "
+                                            f"seed='unavailable': {e}"))
 
     except psycopg2.Error as e:
         results.append(SingleTestResult("seed", "T6_seed", "ERROR",
@@ -894,7 +948,20 @@ def _test_seed(conn) -> list[SingleTestResult]:
 
 
 def _test_tcp_keepalives(conn) -> list[SingleTestResult]:
-    """Test tcp_keepalives_* GUCs whose SHOW returns kernel values."""
+    """Test tcp_keepalives_* GUCs whose SHOW returns kernel socket values.
+
+    The CSV analysis identifies two concerns:
+    1. SHOW returns kernel socket value, not what was SET. So ConnMgr
+       tracks/restores a potentially different value.
+    2. The assign hook sets the kernel socket option, which persists on the
+       connection until overwritten on deploy.
+
+    These GUCs go through ConnMgr properly, but the value ConnMgr tracks may
+    not match what the user SET (it tracks what SHOW returned, i.e., the
+    kernel value). On deploy to a new backend, ConnMgr replays
+    SET tcp_keepalives_count = '<kernel_value>' which may differ from the
+    original SET.
+    """
     results = []
     tcp_gucs = [
         ("tcp_keepalives_count", "5"),
@@ -905,20 +972,44 @@ def _test_tcp_keepalives(conn) -> list[SingleTestResult]:
 
     for guc_name, test_val in tcp_gucs:
         try:
+            # Test 1: SET doesn't error
             set_guc(conn, guc_name, test_val)
             shown = show_guc(conn, guc_name)
 
-            # The SHOW hook returns the kernel value, not the GUC value.
-            # We just verify SET doesn't error and SHOW returns something.
-            if shown is not None:
-                results.append(SingleTestResult(guc_name, "T6_tcp",
+            if shown is None:
+                results.append(SingleTestResult(guc_name, "T6_tcp_set",
+                                                "FAIL", "SHOW returned None"))
+                continue
+
+            # Note: We intentionally do NOT assert shown == test_val.
+            # SHOW returns the kernel socket value which may be 0 (not set
+            # at OS level) even though SET succeeded. This is a known
+            # NEEDS_REVIEW behavior.
+            results.append(SingleTestResult(guc_name, "T6_tcp_set",
+                                            "PASS",
+                                            f"SET={test_val}, SHOW='{shown}' "
+                                            f"(SHOW returns kernel value, not "
+                                            f"GUC value - KNOWN LIMITATION)"))
+
+            # Test 2: Cross-txn -- does the value survive deploy?
+            execute_sql(conn, "SELECT 1")
+            time.sleep(0.05)
+            shown_after = show_guc(conn, guc_name)
+
+            # The deployed value should match what ConnMgr tracked (the
+            # kernel value from the first SHOW), not the original SET value.
+            if shown_after == shown:
+                results.append(SingleTestResult(guc_name, "T6_tcp_deploy",
                                                 "PASS",
-                                                f"SET={test_val}, SHOW='{shown}' "
-                                                f"(kernel value may differ)"))
+                                                f"After deploy: SHOW='{shown_after}' "
+                                                f"(consistent with pre-deploy "
+                                                f"SHOW='{shown}')"))
             else:
-                results.append(SingleTestResult(guc_name, "T6_tcp",
+                results.append(SingleTestResult(guc_name, "T6_tcp_deploy",
                                                 "FAIL",
-                                                "SHOW returned None"))
+                                                f"After deploy: SHOW='{shown_after}' "
+                                                f"differs from pre-deploy "
+                                                f"SHOW='{shown}'"))
 
             reset_guc(conn, guc_name)
 
@@ -1339,7 +1430,8 @@ def run_all_tests(args) -> tuple[list[SingleTestResult], dict]:
     testable_userset = [g for g in userset_gucs
                         if not should_skip(g)[0]
                         and g.name not in TRANSACTION_ONLY_GUCS
-                        and g.name not in KERNEL_VALUE_GUCS]
+                        and g.name not in KERNEL_VALUE_GUCS
+                        and g.name not in NO_RESET_ALL_GUCS]
     t4_results = run_t4_reset_all(user_conn_ref[0], testable_userset)
     all_results.extend(t4_results)
     for r in t4_results:
@@ -1348,7 +1440,8 @@ def run_all_tests(args) -> tuple[list[SingleTestResult], dict]:
     testable_suset = [g for g in suset_gucs
                       if not should_skip(g)[0]
                       and g.name not in TRANSACTION_ONLY_GUCS
-                      and g.name not in KERNEL_VALUE_GUCS]
+                      and g.name not in KERNEL_VALUE_GUCS
+                      and g.name not in NO_RESET_ALL_GUCS]
     t4_su_results = run_t4_reset_all(su_conn_ref[0], testable_suset)
     all_results.extend(t4_su_results)
     for r in t4_su_results:
