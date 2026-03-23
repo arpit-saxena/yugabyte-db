@@ -1146,6 +1146,8 @@ def run_all_tests(args) -> tuple[list[SingleTestResult], dict]:
         all_results.append(r)
         _print_result(r)
 
+    print()  # newline after T1 dots
+
     # ---- T2: Cross-transaction persistence ----
     print("\n" + "=" * 70)
     print("T2: Cross-transaction persistence (deploy test)")
@@ -1161,6 +1163,8 @@ def run_all_tests(args) -> tuple[list[SingleTestResult], dict]:
         all_results.append(r)
         _print_result(r)
 
+    print()  # newline after T2 dots
+
     # ---- T3: Session isolation ----
     print("\n" + "=" * 70)
     print("T3: Session isolation (no state leakage)")
@@ -1175,6 +1179,8 @@ def run_all_tests(args) -> tuple[list[SingleTestResult], dict]:
         r = run_t3_session_isolation(su_conn_factory, guc)
         all_results.append(r)
         _print_result(r)
+
+    print()  # newline after T3 dots
 
     # ---- T4: RESET ALL ----
     print("\n" + "=" * 70)
@@ -1197,6 +1203,8 @@ def run_all_tests(args) -> tuple[list[SingleTestResult], dict]:
     for r in t4_su_results:
         _print_result(r)
 
+    print()  # newline after T4 dots
+
     # ---- T5: SET LOCAL ----
     print("\n" + "=" * 70)
     print("T5: SET LOCAL (transaction-scoped)")
@@ -1211,6 +1219,8 @@ def run_all_tests(args) -> tuple[list[SingleTestResult], dict]:
         r = run_t5_set_local(su_conn, guc)
         all_results.append(r)
         _print_result(r)
+
+    print()  # newline after T5 dots
 
     # ---- T6: NEEDS_REVIEW special cases ----
     print("\n" + "=" * 70)
@@ -1243,17 +1253,30 @@ def run_all_tests(args) -> tuple[list[SingleTestResult], dict]:
     return all_results, summary
 
 
+_print_counter = 0
+
+
 def _print_result(r: SingleTestResult):
     """Print a single test result on one line."""
+    global _print_counter
     status_char = {"PASS": ".", "FAIL": "F", "SKIP": "S", "ERROR": "E"}
     c = status_char.get(r.result, "?")
     if r.result in ("FAIL", "ERROR"):
+        if _print_counter > 0:
+            print()  # newline before error message
+            _print_counter = 0
         print(f"  [{c}] {r.test_category} {r.guc_name}: {r.message}")
     elif r.result == "SKIP" and os.environ.get("VERBOSE"):
+        if _print_counter > 0:
+            print()
+            _print_counter = 0
         print(f"  [{c}] {r.test_category} {r.guc_name}: {r.message}")
     else:
-        # Print dots for passes on same line for compactness
         print(c, end="", flush=True)
+        _print_counter += 1
+        if _print_counter >= 72:
+            print()
+            _print_counter = 0
 
 
 # ---------------------------------------------------------------------------
