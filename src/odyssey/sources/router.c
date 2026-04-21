@@ -470,12 +470,24 @@ static inline int od_router_gc_cb(od_route_t *route, void **argv)
 	int index = route->id.yb_stats_index;
 	od_route_lock(route);
 
-	if (route->status == YB_ROUTE_INACTIVE)
-		goto clean;
-
+	/*
+	 * YB: Do not free a route that still has clients or servers attached,
+	 * regardless of its status. An INACTIVE route (for example, one whose
+	 * database/user was dropped/recreated or renamed) may still be
+	 * referenced via od_client_t::route by worker coroutines executing
+	 * od_frontend_cleanup, od_reset, etc. Freeing it here would leave
+	 * those references dangling and trigger a use-after-free (see GH#31189
+	 * where od_frontend_cleanup crashes dereferencing route->err_logger
+	 * because od_route_free() had just reset it to NULL while the route
+	 * memory was reused). Wait for the next GC cycle once all attached
+	 * clients/servers have detached and unrouted themselves.
+	 */
 	if (od_server_pool_total(&route->server_pool) > 0 ||
 	    od_client_pool_total(&route->client_pool) > 0)
 		goto done;
+
+	if (route->status == YB_ROUTE_INACTIVE)
+		goto clean;
 
 	if (!od_route_is_dynamic(route) && !route->rule->obsolete)
 		goto done;
