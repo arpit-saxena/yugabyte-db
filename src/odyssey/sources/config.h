@@ -93,6 +93,13 @@ struct od_config {
 	int yb_optimized_session_parameters;
 	int yb_max_pools;
 	int TEST_yb_auth_delay_ms;
+	/*
+	 * YB: test-only knob. When > 0, od_frontend_cleanup sleeps for this many
+	 * milliseconds at the top of the function (before dereferencing
+	 * client->route). This is used to deterministically exercise the
+	 * INACTIVE-route GC race fixed for GH#31189.
+	 */
+	int TEST_yb_frontend_cleanup_delay_ms;
 	enum yb_od_alter_guc_adoption yb_alter_guc_adoption_strategy;
 	int yb_alter_guc_stale_backend_ttl_ms;
 };

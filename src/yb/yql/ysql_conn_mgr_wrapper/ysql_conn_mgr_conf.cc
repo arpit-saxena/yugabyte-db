@@ -60,6 +60,7 @@ DECLARE_int32(ysql_conn_mgr_max_pools);
 DECLARE_uint32(ysql_conn_mgr_jitter_time);
 DECLARE_uint32(ysql_conn_mgr_reserve_internal_conns);
 DECLARE_uint32(TEST_ysql_conn_mgr_auth_delay_ms);
+DECLARE_uint32(TEST_ysql_conn_mgr_frontend_cleanup_delay_ms);
 DECLARE_string(ysql_conn_mgr_alter_guc_adoption_strategy);
 DECLARE_int32(ysql_conn_mgr_alter_guc_stale_backend_ttl_ms);
 
@@ -233,6 +234,8 @@ std::string YsqlConnMgrConf::CreateYsqlConnMgrConfigAndGetPath() {
     {"{%yb_max_pools%}", std::to_string(FLAGS_ysql_conn_mgr_max_pools)},
     {"{%yb_jitter_time%}", std::to_string(FLAGS_ysql_conn_mgr_jitter_time)},
     {"{%TEST_yb_auth_delay_ms%}", std::to_string(FLAGS_TEST_ysql_conn_mgr_auth_delay_ms)},
+    {"{%TEST_yb_frontend_cleanup_delay_ms%}",
+     std::to_string(FLAGS_TEST_ysql_conn_mgr_frontend_cleanup_delay_ms)},
     {"{%yb_alter_guc_adoption_strategy%}", FLAGS_ysql_conn_mgr_alter_guc_adoption_strategy},
     {"{%yb_alter_guc_stale_backend_ttl_ms%}",
         std::to_string(FLAGS_ysql_conn_mgr_alter_guc_stale_backend_ttl_ms)},

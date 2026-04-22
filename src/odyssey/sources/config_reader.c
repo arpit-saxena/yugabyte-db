@@ -156,6 +156,7 @@ typedef enum {
 	OD_YB_MAX_POOLS,
 	OD_YB_JITTER_TIME,
 	OD_TEST_YB_AUTH_DELAY_MS,
+	OD_TEST_YB_FRONTEND_CLEANUP_DELAY_MS,
 	OD_YB_ALTER_GUC_ADOPTION_STRATEGY,
 	OD_YB_ALTER_GUC_STALE_BACKEND_TTL_MS,
 } od_lexeme_t;
@@ -340,6 +341,8 @@ static od_keyword_t od_config_keywords[] = {
 	od_keyword("yb_max_pools", OD_YB_MAX_POOLS),
 	od_keyword("yb_jitter_time", OD_YB_JITTER_TIME),
 	od_keyword("TEST_yb_auth_delay_ms", OD_TEST_YB_AUTH_DELAY_MS),
+	od_keyword("TEST_yb_frontend_cleanup_delay_ms",
+		   OD_TEST_YB_FRONTEND_CLEANUP_DELAY_MS),
 	od_keyword("yb_alter_guc_adoption_strategy",
 		   OD_YB_ALTER_GUC_ADOPTION_STRATEGY),
 	od_keyword("yb_alter_guc_stale_backend_ttl_ms",
@@ -2532,6 +2535,14 @@ static int od_config_reader_parse(od_config_reader_t *reader,
 		case OD_TEST_YB_AUTH_DELAY_MS:
 			if (!od_config_reader_number(
 				    reader, &config->TEST_yb_auth_delay_ms)) {
+				goto error;
+			}
+			continue;
+		/* TEST_yb_frontend_cleanup_delay_ms */
+		case OD_TEST_YB_FRONTEND_CLEANUP_DELAY_MS:
+			if (!od_config_reader_number(
+				    reader,
+				    &config->TEST_yb_frontend_cleanup_delay_ms)) {
 				goto error;
 			}
 			continue;

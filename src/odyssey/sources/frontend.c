@@ -2137,6 +2137,50 @@ static void od_frontend_cleanup(od_client_t *client, char *context,
 
 	od_server_t *server = client->server;
 
+	/*
+	 * YB: test-only deterministic hook that reproduces the INACTIVE-route
+	 * GC use-after-free described in GH#31189.
+	 *
+	 * The production bug fires when:
+	 *   (A) something calls yb_mark_routes_inactive on the client's route
+	 *       (e.g. backend returns "Database may have been dropped and
+	 *       recreated" or "invalid role OID"), and
+	 *   (B) cron's od_router_gc ticks and frees the route before the worker
+	 *       coroutine gets a chance to read client->route in
+	 *       od_frontend_cleanup (specifically the err_logger deref inside
+	 *       od_error_logger_store_err).
+	 *
+	 * Both conditions are naturally racy to trigger from a functional test.
+	 * When TEST_yb_frontend_cleanup_delay_ms > 0, we synthesize both
+	 * deterministically: mark client->route INACTIVE and then sleep for the
+	 * configured duration so that cron has multiple 1-second ticks to run
+	 * od_router_gc against it. We then invoke the same err_logger deref
+	 * the bug crashes on, so that a buggy GC path SEGVs here even for an
+	 * otherwise-graceful OD_STOP/OD_OK close. No-op in production (flag
+	 * defaults to 0).
+	 */
+	if (od_unlikely(instance->config.TEST_yb_frontend_cleanup_delay_ms > 0 &&
+			route != NULL)) {
+		od_log(&instance->logger, context, client, server,
+		       "TEST: marking route INACTIVE and sleeping %d ms at "
+		       "od_frontend_cleanup entry (status=%s)",
+		       instance->config.TEST_yb_frontend_cleanup_delay_ms,
+		       od_frontend_status_to_str(status));
+		od_route_lock(route);
+		route->status = YB_ROUTE_INACTIVE;
+		od_route_unlock(route);
+		machine_sleep(
+			instance->config.TEST_yb_frontend_cleanup_delay_ms);
+		od_log(&instance->logger, context, client, server,
+		       "TEST: woke up from od_frontend_cleanup sleep, "
+		       "about to exercise route->err_logger deref");
+		if (route->extra_logging_enabled &&
+		    !od_route_is_dynamic(route)) {
+			od_error_logger_store_err(route->err_logger,
+						  OD_ESERVER_READ);
+		}
+	}
+
 	if (od_frontend_status_is_err(status)) {
 		od_error_logger_store_err(l, status);
 

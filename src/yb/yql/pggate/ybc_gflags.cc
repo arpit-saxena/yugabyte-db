@@ -45,6 +45,13 @@ DEFINE_test_flag(uint32, ysql_conn_mgr_auth_delay_ms, 0,
     "Add a delay in od_auth_backend to simulate stalls during authentication with connection "
     " manager .");
 
+DEFINE_test_flag(uint32, ysql_conn_mgr_frontend_cleanup_delay_ms, 0,
+    "Add a delay at the top of od_frontend_cleanup in Ysql Connection Manager. Used "
+    "to deterministically widen the window between a route being marked INACTIVE "
+    "(e.g. after a DROP DATABASE / DROP ROLE) and the first use of client->route "
+    "inside od_frontend_cleanup, so that cron's od_router_gc can run in between. "
+    "This exercises the INACTIVE-route GC use-after-free path fixed for GH#31189.");
+
 DEFINE_NON_RUNTIME_bool(ysql_conn_mgr_superuser_sticky, true,
     "If enabled, make superuser connections sticky in Ysql Connection Manager.");
 
