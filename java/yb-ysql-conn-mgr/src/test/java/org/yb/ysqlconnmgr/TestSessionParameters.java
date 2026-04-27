@@ -27,6 +27,7 @@ import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
 import java.util.HashSet;
 import java.util.Arrays;
@@ -835,6 +836,151 @@ public class TestSessionParameters extends BaseYsqlConnMgr {
       } catch (Exception e) {
         assertTrue("Expected error about parameter cannot be set after connection start",
             e.getMessage().contains("cannot be set after connection start"));
+      }
+    }
+  }
+
+  // GH #28850: Connection Manager must NOT forward ParameterStatus packets to the external client
+  // when it is deploying a logical connection onto a physical backend. The state being applied to
+  // the physical backend was originally set by the same logical connection, so it is already known
+  // to the client; sending a ParameterStatus during deploy is spurious traffic.
+  //
+  // To verify, we use a custom socket factory that counts inbound 'S' (ParameterStatus) packets.
+  // After establishing the logical connection and issuing SET statements, we reset the counter,
+  // then force the logical connection to attach to a different physical backend by occupying its
+  // current backend with another logical connection (in a transaction) and waking it up. We expect
+  // zero ParameterStatus packets to arrive at the client during this deploy.
+  @Test
+  public void testNoParameterStatusSentDuringDeploy() throws Exception {
+    final String socketFactoryClass =
+        "org.yb.ysqlconnmgr.CountParameterStatusSocketFactory";
+
+    // Test connection that will be migrated across physical backends. We attach the counting
+    // socket factory only to this connection, so any ParameterStatus we observe corresponds to
+    // its lifecycle.
+    Properties props = new Properties();
+    props.setProperty("user", "yugabyte");
+    props.setProperty("socketFactory", socketFactoryClass);
+    // sslmode=disable so the JDBC driver does not send an SSLRequest. Likewise gssEncMode=disable
+    // skips the GSSEncRequest. The server's reply to either of those non-protocol requests is a
+    // single byte ('N' / 'S') which is *not* a regular v3 protocol message, and would put our
+    // byte-stream parser out of sync with subsequent messages.
+    props.setProperty("sslmode", "disable");
+    props.setProperty("gssEncMode", "disable");
+
+    // Helper connections used to occupy / free the physical backends. These deliberately do not
+    // use the inspecting socket factory so we don't pollute the counter.
+    try (Connection mainConn = getConnectionBuilder()
+            .withConnectionEndpoint(ConnectionEndpoint.YSQL_CONN_MGR)
+            .connect(props);
+        Connection helper1 = getConnectionBuilder()
+            .withConnectionEndpoint(ConnectionEndpoint.YSQL_CONN_MGR)
+            .connect();
+        Connection helper2 = getConnectionBuilder()
+            .withConnectionEndpoint(ConnectionEndpoint.YSQL_CONN_MGR)
+            .connect();
+        Connection helper3 = isTestRunningInWarmupRandomMode() ? getConnectionBuilder()
+            .withConnectionEndpoint(ConnectionEndpoint.YSQL_CONN_MGR)
+            .connect() : null;
+        Statement mainStmt = mainConn.createStatement();
+        Statement helperStmt1 = helper1.createStatement();
+        Statement helperStmt2 = helper2.createStatement();
+        Statement helperStmt3 = (helper3 != null) ? helper3.createStatement() : null) {
+
+      // Issue SET statements that touch GUC_REPORT variables. These should produce
+      // ParameterStatus packets at this point in time (which we are not measuring).
+      mainStmt.execute("SET application_name = 'cm_deploy_test'");
+      mainStmt.execute("SET TimeZone = 'EST'");
+
+      // Confirm we received some ParameterStatus packets so far (so we know the counter works).
+      int countBeforeDeploy = CountParameterStatusSocketFactory.getLatestCount();
+      assertTrue("Expected at least one ParameterStatus packet during initial setup, got "
+              + countBeforeDeploy, countBeforeDeploy > 0);
+
+      // Find the backend PID we are currently attached to. Note: in transaction pool mode, the
+      // mainConn detaches from the backend after this auto-committed query, freeing the slot.
+      ResultSet rs = mainStmt.executeQuery("SELECT pg_backend_pid()");
+      assertTrue("backend pid should be non-null", rs.next());
+      int initialPID = rs.getInt(1);
+      rs.close();
+
+      // Saturate the pool with helper transactions so that when mainConn next attaches it must
+      // pick a slot currently freed by a helper -- not necessarily its previous slot.
+      Statement[] helperStmts = (helperStmt3 != null)
+          ? new Statement[] {helperStmt1, helperStmt2, helperStmt3}
+          : new Statement[] {helperStmt1, helperStmt2};
+      int[] helperPIDs = new int[helperStmts.length];
+      for (int i = 0; i < helperStmts.length; i++) {
+        helperStmts[i].execute("BEGIN");
+        try (ResultSet rs2 = helperStmts[i].executeQuery("SELECT pg_backend_pid()")) {
+          assertTrue(rs2.next());
+          helperPIDs[i] = rs2.getInt(1);
+        }
+      }
+
+      // Pick a helper whose backend PID is different from initialPID. With pool size >= 2 there
+      // are at least 2 helpers, so at least one of them is on a different backend than mainConn's
+      // initial backend (since mainConn's slot was free when the helpers attached, all helpers
+      // got distinct backends).
+      int helperToCommitIdx = -1;
+      for (int i = 0; i < helperStmts.length; i++) {
+        if (helperPIDs[i] != initialPID) {
+          helperToCommitIdx = i;
+          break;
+        }
+      }
+      assertTrue(
+          "Could not find a helper on a backend different from mainConn's initial backend.",
+          helperToCommitIdx >= 0);
+
+      // Now reset the counter -- we are about to force a deploy on the main connection, and want
+      // to count only the packets received during that flow.
+      CountParameterStatusSocketFactory.resetLatestCount();
+
+      // Free the slot held by the helper on a non-initialPID backend, then make mainConn attach.
+      // Since the only free slot is on a different backend, mainConn must land on a new backend
+      // and must therefore go through the deploy phase to replay the SET state we issued earlier.
+      helperStmts[helperToCommitIdx].execute("COMMIT");
+
+      ResultSet rs2 = mainStmt.executeQuery("SELECT pg_backend_pid()");
+      assertTrue("backend pid should be non-null", rs2.next());
+      int currentPID = rs2.getInt(1);
+      rs2.close();
+
+      assertTrue(
+          "Expected mainConn to attach to a new physical backend (got " + currentPID
+              + ", initial was " + initialPID + ", helper PIDs were " + Arrays.toString(helperPIDs)
+              + ")",
+          currentPID != initialPID);
+
+      // Confirm the GUC values are still correctly set on the new backend -- this also exercises
+      // the deploy-replay path for the SETs.
+      try (ResultSet rs3 = mainStmt.executeQuery("SHOW application_name")) {
+        assertTrue(rs3.next());
+        assertEquals("cm_deploy_test", rs3.getString(1));
+      }
+      try (ResultSet rs3 = mainStmt.executeQuery("SHOW TimeZone")) {
+        assertTrue(rs3.next());
+        assertEquals("EST", rs3.getString(1));
+      }
+
+      // The crucial assertion: during deploy (and any SHOW queries), we must NOT have received any
+      // ParameterStatus packets, because:
+      //   - SET statements were issued before resetLatestCount() was called.
+      //   - SHOW statements only return rows; they do not generate ParameterStatus packets.
+      //   - Deploy replays GUCs to the new physical backend, but those replays should NOT be
+      //     forwarded to the client.
+      int countAfterDeploy = CountParameterStatusSocketFactory.getLatestCount();
+      assertEquals(
+          "ConnMgr must not forward ParameterStatus packets to client during deploy. Got "
+              + countAfterDeploy + " ParameterStatus packets, expected 0.",
+          0, countAfterDeploy);
+
+      // Cleanup -- release any remaining helper transactions.
+      for (int i = 0; i < helperStmts.length; i++) {
+        if (i != helperToCommitIdx) {
+          helperStmts[i].execute("COMMIT");
+        }
       }
     }
   }

@@ -779,7 +779,18 @@ static od_frontend_status_t od_frontend_remote_server(od_relay_t *relay,
 			"Refusing to parse unexpected 'S' ParameterStatus message from Postgres");
 		break;
 	case YB_CONN_MGR_PARAMETER_STATUS:
-		rc = od_backend_update_parameter(server, "main", data, size, 0);
+		/*
+		 * YB: When we are in the deploy phase, we are attaching the
+		 * logical connection to a (potentially fresh) physical backend
+		 * and replaying GUCs to it. The values being reported back by
+		 * Postgres are already known to the external client (they came
+		 * from the client's logical connection state), so we must not
+		 * forward ParameterStatus to the client. We still need to keep
+		 * server-side bookkeeping (yb_vars_default / yb_vars_session)
+		 * in sync, hence we pass server_only=1.
+		 */
+		rc = od_backend_update_parameter(server, "main", data, size,
+						 is_deploy);
 		if (rc == -1)
 			return relay->error_read;
 		break;
