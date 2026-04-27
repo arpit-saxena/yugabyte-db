@@ -861,6 +861,12 @@ public class TestSessionParameters extends BaseYsqlConnMgr {
     Properties props = new Properties();
     props.setProperty("user", "yugabyte");
     props.setProperty("socketFactory", socketFactoryClass);
+    // sslmode=disable so the JDBC driver does not send an SSLRequest. Likewise gssEncMode=disable
+    // skips the GSSEncRequest. The server's reply to either of those non-protocol requests is a
+    // single byte ('N' / 'S') which is *not* a regular v3 protocol message, and would put our
+    // byte-stream parser out of sync with subsequent messages.
+    props.setProperty("sslmode", "disable");
+    props.setProperty("gssEncMode", "disable");
 
     // Helper connections used to occupy / free the physical backends. These deliberately do not
     // use the inspecting socket factory so we don't pollute the counter.
@@ -891,64 +897,71 @@ public class TestSessionParameters extends BaseYsqlConnMgr {
       assertTrue("Expected at least one ParameterStatus packet during initial setup, got "
               + countBeforeDeploy, countBeforeDeploy > 0);
 
-      // Find the backend PID we are currently attached to.
+      // Find the backend PID we are currently attached to. Note: in transaction pool mode, the
+      // mainConn detaches from the backend after this auto-committed query, freeing the slot.
       ResultSet rs = mainStmt.executeQuery("SELECT pg_backend_pid()");
       assertTrue("backend pid should be non-null", rs.next());
       int initialPID = rs.getInt(1);
+      rs.close();
 
-      // Saturate every other slot in the pool with a transaction so when we re-attach later, we
-      // cannot land back on the same physical backend.
-      helperStmt1.execute("BEGIN");
-      helperStmt1.execute("SELECT 1");
-      helperStmt2.execute("BEGIN");
-      helperStmt2.execute("SELECT 1");
-      if (helperStmt3 != null) {
-        helperStmt3.execute("BEGIN");
-        helperStmt3.execute("SELECT 1");
+      // Saturate the pool with helper transactions so that when mainConn next attaches it must
+      // pick a slot currently freed by a helper -- not necessarily its previous slot.
+      Statement[] helperStmts = (helperStmt3 != null)
+          ? new Statement[] {helperStmt1, helperStmt2, helperStmt3}
+          : new Statement[] {helperStmt1, helperStmt2};
+      int[] helperPIDs = new int[helperStmts.length];
+      for (int i = 0; i < helperStmts.length; i++) {
+        helperStmts[i].execute("BEGIN");
+        try (ResultSet rs2 = helperStmts[i].executeQuery("SELECT pg_backend_pid()")) {
+          assertTrue(rs2.next());
+          helperPIDs[i] = rs2.getInt(1);
+        }
       }
+
+      // Pick a helper whose backend PID is different from initialPID. With pool size >= 2 there
+      // are at least 2 helpers, so at least one of them is on a different backend than mainConn's
+      // initial backend (since mainConn's slot was free when the helpers attached, all helpers
+      // got distinct backends).
+      int helperToCommitIdx = -1;
+      for (int i = 0; i < helperStmts.length; i++) {
+        if (helperPIDs[i] != initialPID) {
+          helperToCommitIdx = i;
+          break;
+        }
+      }
+      assertTrue(
+          "Could not find a helper on a backend different from mainConn's initial backend.",
+          helperToCommitIdx >= 0);
 
       // Now reset the counter -- we are about to force a deploy on the main connection, and want
       // to count only the packets received during that flow.
       CountParameterStatusSocketFactory.resetLatestCount();
 
-      // Force the main connection to attach to a different physical backend by issuing a query
-      // after detaching from the current one. Since the pool has only `ysql_conn_mgr_max_conns_per_db`
-      // slots, all of which are either occupied by helpers' transactions or by mainConn itself,
-      // committing helperStmt1 frees a slot. Wrapping mainConn's next query in a fresh statement
-      // (transaction-pooled detach happens at end of last transaction) requires us to first detach
-      // mainConn. We do so by ensuring it is NOT in a transaction and issuing a single query.
-      // The simplest way to deterministically force re-attach is:
-      //   1. Have helperStmt1 commit (frees its physical backend slot)
-      //   2. Have helperStmt2 BEGIN a new transaction (ensures a slot is held by it)
-      //   3. Issue a query on mainConn -- it must attach to a different physical backend than its
-      //      original since helpers are still occupying others.
-      // To make this deterministic across pool sizes, we just iterate over a small number of
-      // queries that each cause an attach/detach cycle.
-      for (int i = 0; i < 5; i++) {
-        // Cycle helpers so the slot mainConn can attach to keeps changing.
-        helperStmt1.execute("COMMIT");
-        helperStmt1.execute("BEGIN");
-        helperStmt1.execute("SELECT 1");
+      // Free the slot held by the helper on a non-initialPID backend, then make mainConn attach.
+      // Since the only free slot is on a different backend, mainConn must land on a new backend
+      // and must therefore go through the deploy phase to replay the SET state we issued earlier.
+      helperStmts[helperToCommitIdx].execute("COMMIT");
 
-        ResultSet rs2 = mainStmt.executeQuery("SELECT pg_backend_pid()");
-        assertTrue("backend pid should be non-null", rs2.next());
-        int currentPID = rs2.getInt(1);
-        rs2.close();
+      ResultSet rs2 = mainStmt.executeQuery("SELECT pg_backend_pid()");
+      assertTrue("backend pid should be non-null", rs2.next());
+      int currentPID = rs2.getInt(1);
+      rs2.close();
 
-        // Confirm the GUC values are still correctly set on whatever backend we land on.
-        try (ResultSet rs3 = mainStmt.executeQuery("SHOW application_name")) {
-          assertTrue(rs3.next());
-          assertEquals("cm_deploy_test", rs3.getString(1));
-        }
-        try (ResultSet rs3 = mainStmt.executeQuery("SHOW TimeZone")) {
-          assertTrue(rs3.next());
-          assertEquals("EST", rs3.getString(1));
-        }
+      assertTrue(
+          "Expected mainConn to attach to a new physical backend (got " + currentPID
+              + ", initial was " + initialPID + ", helper PIDs were " + Arrays.toString(helperPIDs)
+              + ")",
+          currentPID != initialPID);
 
-        if (currentPID != initialPID) {
-          // We attached to a new physical backend at least once -- this means deploy ran.
-          break;
-        }
+      // Confirm the GUC values are still correctly set on the new backend -- this also exercises
+      // the deploy-replay path for the SETs.
+      try (ResultSet rs3 = mainStmt.executeQuery("SHOW application_name")) {
+        assertTrue(rs3.next());
+        assertEquals("cm_deploy_test", rs3.getString(1));
+      }
+      try (ResultSet rs3 = mainStmt.executeQuery("SHOW TimeZone")) {
+        assertTrue(rs3.next());
+        assertEquals("EST", rs3.getString(1));
       }
 
       // The crucial assertion: during deploy (and any SHOW queries), we must NOT have received any
@@ -963,11 +976,11 @@ public class TestSessionParameters extends BaseYsqlConnMgr {
               + countAfterDeploy + " ParameterStatus packets, expected 0.",
           0, countAfterDeploy);
 
-      // Cleanup
-      helperStmt1.execute("COMMIT");
-      helperStmt2.execute("COMMIT");
-      if (helperStmt3 != null) {
-        helperStmt3.execute("COMMIT");
+      // Cleanup -- release any remaining helper transactions.
+      for (int i = 0; i < helperStmts.length; i++) {
+        if (i != helperToCommitIdx) {
+          helperStmts[i].execute("COMMIT");
+        }
       }
     }
   }
