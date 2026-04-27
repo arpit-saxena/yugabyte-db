@@ -27,6 +27,7 @@ import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
 import java.util.HashSet;
 import java.util.Arrays;
@@ -835,6 +836,138 @@ public class TestSessionParameters extends BaseYsqlConnMgr {
       } catch (Exception e) {
         assertTrue("Expected error about parameter cannot be set after connection start",
             e.getMessage().contains("cannot be set after connection start"));
+      }
+    }
+  }
+
+  // GH #28850: Connection Manager must NOT forward ParameterStatus packets to the external client
+  // when it is deploying a logical connection onto a physical backend. The state being applied to
+  // the physical backend was originally set by the same logical connection, so it is already known
+  // to the client; sending a ParameterStatus during deploy is spurious traffic.
+  //
+  // To verify, we use a custom socket factory that counts inbound 'S' (ParameterStatus) packets.
+  // After establishing the logical connection and issuing SET statements, we reset the counter,
+  // then force the logical connection to attach to a different physical backend by occupying its
+  // current backend with another logical connection (in a transaction) and waking it up. We expect
+  // zero ParameterStatus packets to arrive at the client during this deploy.
+  @Test
+  public void testNoParameterStatusSentDuringDeploy() throws Exception {
+    final String socketFactoryClass =
+        "org.yb.ysqlconnmgr.CountParameterStatusSocketFactory";
+
+    // Test connection that will be migrated across physical backends. We attach the counting
+    // socket factory only to this connection, so any ParameterStatus we observe corresponds to
+    // its lifecycle.
+    Properties props = new Properties();
+    props.setProperty("user", "yugabyte");
+    props.setProperty("socketFactory", socketFactoryClass);
+
+    // Helper connections used to occupy / free the physical backends. These deliberately do not
+    // use the inspecting socket factory so we don't pollute the counter.
+    try (Connection mainConn = getConnectionBuilder()
+            .withConnectionEndpoint(ConnectionEndpoint.YSQL_CONN_MGR)
+            .connect(props);
+        Connection helper1 = getConnectionBuilder()
+            .withConnectionEndpoint(ConnectionEndpoint.YSQL_CONN_MGR)
+            .connect();
+        Connection helper2 = getConnectionBuilder()
+            .withConnectionEndpoint(ConnectionEndpoint.YSQL_CONN_MGR)
+            .connect();
+        Connection helper3 = isTestRunningInWarmupRandomMode() ? getConnectionBuilder()
+            .withConnectionEndpoint(ConnectionEndpoint.YSQL_CONN_MGR)
+            .connect() : null;
+        Statement mainStmt = mainConn.createStatement();
+        Statement helperStmt1 = helper1.createStatement();
+        Statement helperStmt2 = helper2.createStatement();
+        Statement helperStmt3 = (helper3 != null) ? helper3.createStatement() : null) {
+
+      // Issue SET statements that touch GUC_REPORT variables. These should produce
+      // ParameterStatus packets at this point in time (which we are not measuring).
+      mainStmt.execute("SET application_name = 'cm_deploy_test'");
+      mainStmt.execute("SET TimeZone = 'EST'");
+
+      // Confirm we received some ParameterStatus packets so far (so we know the counter works).
+      int countBeforeDeploy = CountParameterStatusSocketFactory.getLatestCount();
+      assertTrue("Expected at least one ParameterStatus packet during initial setup, got "
+              + countBeforeDeploy, countBeforeDeploy > 0);
+
+      // Find the backend PID we are currently attached to.
+      ResultSet rs = mainStmt.executeQuery("SELECT pg_backend_pid()");
+      assertTrue("backend pid should be non-null", rs.next());
+      int initialPID = rs.getInt(1);
+
+      // Saturate every other slot in the pool with a transaction so when we re-attach later, we
+      // cannot land back on the same physical backend.
+      helperStmt1.execute("BEGIN");
+      helperStmt1.execute("SELECT 1");
+      helperStmt2.execute("BEGIN");
+      helperStmt2.execute("SELECT 1");
+      if (helperStmt3 != null) {
+        helperStmt3.execute("BEGIN");
+        helperStmt3.execute("SELECT 1");
+      }
+
+      // Now reset the counter -- we are about to force a deploy on the main connection, and want
+      // to count only the packets received during that flow.
+      CountParameterStatusSocketFactory.resetLatestCount();
+
+      // Force the main connection to attach to a different physical backend by issuing a query
+      // after detaching from the current one. Since the pool has only `ysql_conn_mgr_max_conns_per_db`
+      // slots, all of which are either occupied by helpers' transactions or by mainConn itself,
+      // committing helperStmt1 frees a slot. Wrapping mainConn's next query in a fresh statement
+      // (transaction-pooled detach happens at end of last transaction) requires us to first detach
+      // mainConn. We do so by ensuring it is NOT in a transaction and issuing a single query.
+      // The simplest way to deterministically force re-attach is:
+      //   1. Have helperStmt1 commit (frees its physical backend slot)
+      //   2. Have helperStmt2 BEGIN a new transaction (ensures a slot is held by it)
+      //   3. Issue a query on mainConn -- it must attach to a different physical backend than its
+      //      original since helpers are still occupying others.
+      // To make this deterministic across pool sizes, we just iterate over a small number of
+      // queries that each cause an attach/detach cycle.
+      for (int i = 0; i < 5; i++) {
+        // Cycle helpers so the slot mainConn can attach to keeps changing.
+        helperStmt1.execute("COMMIT");
+        helperStmt1.execute("BEGIN");
+        helperStmt1.execute("SELECT 1");
+
+        ResultSet rs2 = mainStmt.executeQuery("SELECT pg_backend_pid()");
+        assertTrue("backend pid should be non-null", rs2.next());
+        int currentPID = rs2.getInt(1);
+        rs2.close();
+
+        // Confirm the GUC values are still correctly set on whatever backend we land on.
+        try (ResultSet rs3 = mainStmt.executeQuery("SHOW application_name")) {
+          assertTrue(rs3.next());
+          assertEquals("cm_deploy_test", rs3.getString(1));
+        }
+        try (ResultSet rs3 = mainStmt.executeQuery("SHOW TimeZone")) {
+          assertTrue(rs3.next());
+          assertEquals("EST", rs3.getString(1));
+        }
+
+        if (currentPID != initialPID) {
+          // We attached to a new physical backend at least once -- this means deploy ran.
+          break;
+        }
+      }
+
+      // The crucial assertion: during deploy (and any SHOW queries), we must NOT have received any
+      // ParameterStatus packets, because:
+      //   - SET statements were issued before resetLatestCount() was called.
+      //   - SHOW statements only return rows; they do not generate ParameterStatus packets.
+      //   - Deploy replays GUCs to the new physical backend, but those replays should NOT be
+      //     forwarded to the client.
+      int countAfterDeploy = CountParameterStatusSocketFactory.getLatestCount();
+      assertEquals(
+          "ConnMgr must not forward ParameterStatus packets to client during deploy. Got "
+              + countAfterDeploy + " ParameterStatus packets, expected 0.",
+          0, countAfterDeploy);
+
+      // Cleanup
+      helperStmt1.execute("COMMIT");
+      helperStmt2.execute("COMMIT");
+      if (helperStmt3 != null) {
+        helperStmt3.execute("COMMIT");
       }
     }
   }
