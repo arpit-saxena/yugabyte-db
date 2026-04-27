@@ -186,8 +186,16 @@ std::string YsqlConnMgrConf::CreateYsqlConnMgrConfigAndGetPath() {
   const auto conf_file_path = JoinPathSegments(data_dir_, conf_file_name_);
   UpdateLogSettings(FLAGS_ysql_conn_mgr_log_settings);
 
+  // When --logtostderr is set we want the Connection Manager to log to
+  // stdout/stderr only and avoid creating any log files. Comment out the
+  // file-logging directives in the generated config in that case (and also when
+  // no log directory is configured) by replacing the {%log_to_file%} marker
+  // with '#'. See GitHub issue #27311.
+  const bool log_to_file = !FLAGS_logtostderr && !FLAGS_log_dir.empty();
+
   // Config map
   std::map<std::string, std::string> ysql_conn_mgr_configs = {
+    {"{%log_to_file%}", log_to_file ? "" : "#"},
     {"{%log_dir%}", FLAGS_log_dir},
     {"{%log_max_size%}", std::to_string(FLAGS_ysql_conn_mgr_log_max_size)},
     {"{%log_rotate_interval%}", std::to_string(FLAGS_ysql_conn_mgr_log_rotate_interval)},
@@ -329,7 +337,13 @@ YsqlConnMgrConf::YsqlConnMgrConf(const std::string& data_path) {
   // Create the log directory if it is not present.
   // This is to handle the case while running the java tests,
   // in which log directory is not created.
-  CHECK_OK(env_util::CreateDirIfMissing(Env::Default(), FLAGS_log_dir.c_str()));
+  //
+  // If --logtostderr is set or no --log_dir is provided, the Connection Manager
+  // is configured to log only to stdout/stderr and does not need a log
+  // directory. See GitHub issue #27311.
+  if (!FLAGS_logtostderr && !FLAGS_log_dir.empty()) {
+    CHECK_OK(env_util::CreateDirIfMissing(Env::Default(), FLAGS_log_dir.c_str()));
+  }
 }
 
 }  // namespace ysql_conn_mgr_wrapper
