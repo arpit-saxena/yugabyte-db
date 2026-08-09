@@ -6,13 +6,22 @@ one flow at a time, with a model as a pair, and with the code as the only author
 ## How to use it
 
 1. Pick a flow from **[`flows.md`](flows.md)** (14 to choose from, in 5 tracks).
-2. Copy the prompt from **[`flow-learning-prompt.md`](flow-learning-prompt.md)** into a
-   fresh agent session, pasting that flow's `FLOW:` and `SCOPE:` blocks into the two slots.
+2. Run **`/learn-flow <n>`** in a fresh agent session — or just `/learn-flow` to get the
+   menu. It reads that flow's `FLOW:` and `SCOPE:` blocks out of `flows.md` for you.
 3. Work through it. The agent walks one hop per message and stops to ask you what happens
    next — answer before reading on. That pause is the whole method.
 4. Notes accumulate in `notes/<flow-slug>.md` as you go.
 
 Budget 1–3 hours per flow. Two flows a week beats one marathon.
+
+Also: `/learn-flow resume <flow>` picks up where you stopped, `/learn-flow deeper <flow>
+hop N` re-runs one hop as its own 5-9 sub-hops, and `/learn-flow <a question>` gets one
+cited answer without the protocol. See
+[`flow-learning-prompt.md`](flow-learning-prompt.md).
+
+The session is calibrated to whoever is in [`learner-profile.md`](learner-profile.md) —
+edit that file to make it yours. The protocol itself lives in
+[`.claude/skills/learn-flow/SKILL.md`](../.claude/skills/learn-flow/SKILL.md).
 
 ## Why it's shaped this way
 
