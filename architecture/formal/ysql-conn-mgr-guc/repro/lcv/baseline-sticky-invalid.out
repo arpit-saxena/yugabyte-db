@@ -1,0 +1,17 @@
+== mode=baseline ALTER value=7MB
+step1 A connects
+  A: pid=3699931 work_mem=4MB
+step3 C connects (new auth + maybe spawn)
+  C: pid=3699941 work_mem=4MB
+step4 A runs a txn
+  A: pid=3699931 work_mem=4MB
+step5 C: ALTER DATABASE yugabyte SET work_mem = '7MB'
+step6 existing clients after ALTER (expect work_mem=7MB under gradual)
+  A: pid=3699931 work_mem=4MB
+  C: pid=3699941 work_mem=4MB
+  A: pid=3699931 work_mem=4MB
+step7 new client D connects
+  D: pid=3700072 work_mem=7MB
+step8 A after D
+  A: pid=3699931 work_mem=4MB
+  C: pid=3699941 work_mem=4MB

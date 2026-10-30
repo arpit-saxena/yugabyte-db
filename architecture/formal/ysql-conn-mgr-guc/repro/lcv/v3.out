@@ -1,0 +1,10 @@
+A connects
+  A: pid,log_disconnections=(3704876, 'on')
+SIGHUP: set_flag --force ysql_pg_conf_csv log_disconnections=off
+A after SIGHUP, 5s, no new connections
+  A: pid,log_disconnections=(3704876, 'on')
+  A: pid,log_disconnections=(3704876, 'on')
+new client D
+  D: pid,log_disconnections=(3705758, 'off')
+A after D
+  A: pid,log_disconnections=(3705758, 'off')

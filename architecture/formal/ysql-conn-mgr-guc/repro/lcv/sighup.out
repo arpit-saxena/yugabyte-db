@@ -1,0 +1,19 @@
+== mode=sighup ALTER value=9MB
+step1 A connects
+  A: pid=3704259 work_mem=7MB
+step2 SIGHUP: set_flag --force ysql_pg_conf_csv log_disconnections=on
+CompletedProcess(args=['/home/ec2-user/code/yb-agent2/build/latest/bin/yb-ts-cli', '--server_address', '127.0.0.77:9100', 'set_flag', '--force', 'ysql_pg_conf_csv', 'log_disconnections=on'], returncode=0, stdout='', stderr='')
+step3 C connects (new auth + maybe spawn)
+  C: pid=3704795 work_mem=7MB
+step4 A runs a txn
+  A: pid=3704795 work_mem=7MB
+step5 C: ALTER DATABASE yugabyte SET work_mem = '9MB'
+step6 existing clients after ALTER (expect work_mem=9MB under gradual)
+  A: pid=3704795 work_mem=7MB
+  C: pid=3704795 work_mem=7MB
+  A: pid=3704795 work_mem=7MB
+step7 new client D connects
+  D: pid=3704866 work_mem=9MB
+step8 A after D
+  A: pid=3704866 work_mem=9MB
+  C: pid=3704866 work_mem=9MB

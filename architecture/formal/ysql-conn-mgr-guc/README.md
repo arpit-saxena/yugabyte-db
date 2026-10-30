@@ -27,3 +27,9 @@ TLA_JAR=~/tools/tla/tla2tools.jar JAVA=/usr/lib/jvm/zulu-17.jdk/bin/java ./run-v
 Design background: "GUC Variables with YSQL Connection Manager" and "DB DS: GUCs in
 Connection Manager" (internal design docs); the hand proof there is what these modules
 mechanise for small bounds.
+
+## Live repros
+
+`repro/` holds the scripts and captured output used to confirm the session-module findings
+(F1, F3) and `repro/lcv/` the versioning findings (V1, V3) on a single-node cluster with
+Connection Manager enabled; see the Verification paragraphs in the results files.
