@@ -19,7 +19,7 @@ META=${META:-${TMPDIR:-/tmp}/gucversioning-meta}
 mkdir -p "$OUT" "$META"
 
 SAFETY_INV=(P5 P5x)
-SAFETY_PROP=(P10 P10d P12 FR1a FR1s FR1b FR1c)
+SAFETY_PROP=(P10 P10d P12 FR1a FR1s FR1b FR1c P13)
 
 # run_one TAG STRATEGY PROPAGATION "KEY=VAL ..." KIND NAME
 run_one() {

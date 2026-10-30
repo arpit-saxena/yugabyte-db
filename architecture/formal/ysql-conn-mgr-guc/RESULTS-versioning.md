@@ -34,6 +34,7 @@ FAIL runs stop at the first counterexample; their state counts are not meaningfu
 | FR1s (auth LCV includes completed SIGHUP) | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL |
 | FR1b (new session runs on defaults >= ALTERs+SIGHUPs before auth) | FAIL | FAIL | FAIL | FAIL | FAIL | FAIL |
 | FR1c (FR1b, ALTER half only) | FAIL | FAIL | FAIL | FAIL | PASS 0.34M 6s | PASS 5.0M 52s |
+| P13 (SIGHUP component fixed within a session) | FAIL | FAIL | FAIL | FAIL | PASS 0.34M 5s | PASS 5.0M 58s |
 
 ## Liveness (FairSpec: WF on Detach, ControlReload, Heartbeat, Cron, TimePass, CronClose)
 
@@ -80,6 +81,33 @@ yb_conn_mgr_sighup_logical_client_version`. That backend's counter is the one it
 with, so after a later SIGHUP the value is still low. In that case the next spawn or auth
 corrects it.
 
+Who is harmed: existing sessions under gradual, which keep landing on S. A session that
+authenticates after the ALTER repairs the pool before its first attach, because its auth
+report (catalog + counter = 2) arrives before the attach. The exception is finding 2.
+This violates the documented gradual contract for ALTER: "Subsequent transactions are
+routed to backends that have the latest ALTER settings" (`ycm-setup.md:273`), and the
+TTL runs "after the ALTER is executed" (`ycm-setup.md:134`).
+
+**Verification: confirmed and reproduced live** by the coordinator on `build/latest`
+(1 node, auth passthrough, gradual, ttl 0, superuser_sticky=false). Scripts and logs are in
+`/home/ec2-user/.claude/jobs/81b07efd/tmp/repro-lcv/` (`start.sh`, `scenario.py`, `v3.py`,
+`*.out`, `*.lcv.log`).
+
+- Sequence: client A connects. `yb-ts-cli set_flag --force ysql_pg_conf_csv
+  log_disconnections=on` triggers a reload. Client C connects; its auth reports 2 and the
+  router max becomes 2. C runs `ALTER DATABASE yugabyte SET work_mem='9MB'`.
+- Expected: the ALTER marks every backend, and A and C move to a 9MB backend.
+- Observed: the ALTER reports 2 and nothing is marked. A and C stay on the old pid with
+  work_mem=7MB for 2 s. Only when a new client D connects (auth reports 3) is the stale
+  backend expired, and A then moves to a 9MB backend.
+- Baseline without the reload: the ALTER reports 1 > 0, every backend is marked, and A
+  moves immediately.
+- The code path was confirmed by reading:
+  - `pg_yb_utils.c:3722-3726` and `:356-359` send catalog only.
+  - Startup reports send catalog + counter (`postinit.c:1604-1605` via
+    `yb_ysql_conn_mgr_helper.c:992`; passthrough `postinit.c:1982-1984`).
+  - `router.c:402-407` returns early.
+
 ### 2. Auth-passthrough control backend's SIGHUP counter lags the postmaster's (FR1s, FR1b, FR1c; candidate product bug, narrow race)
 
 FR1s (all strategies): SIGHUP on n1. c1 authenticates before the control backend has
@@ -106,17 +134,93 @@ authenticated before the reload is rejected when it tries to spawn a newer backe
 (`frontend.c:432-439`), so it never reaches S. Pushed does not close the window, because the
 cron runs asynchronously.
 
-### 3. A SIGHUP alone never expires idle backends under on_read (P11b with MAXALTER 0; candidate gap, fixed by the UFD)
+**Verification: confirmed from code only, not run live.**
+- `postmaster.c:3177-3184` bumps the counter and then calls `SignalChildren`.
+- The control backend bumps its copy in step (6) of its main loop (`postgres.c:7144-7188`),
+  after `ReadCommand`.
+- Auth reads the control backend's copy (`postinit.c:1983`, then
+  `yb_auth_passthrough.c:745-748`).
+- The window: the SIGHUP lands after step (6) has already run for an auth that is in
+  flight.
+- In the live runs the control backend did catch up on later auths.
 
-Scenario: backend S idles on n1. SIGHUP changes a PGC_BACKEND GUC and the control backend
-reloads. No client connects or spawns afterwards. Nothing reports LCV 1 to the router, so S
-is never expired and keeps the old value indefinitely. This is the same mechanism as
-UFD 2.2, but on the local node and for SIGHUP; the UFD's problem statement mentions only
-ALTER. The UFD cron (`sighup_logical_client_version` in shmem) fixes it: the pushed columns
-pass.
+### 3. Under gradual, a SIGHUP reaches existing sessions, at a moment set by unrelated traffic (P11b with MAXALTER 0, P13; FS gap, not a staleness bug)
 
-Code: `postmaster.c:3177-3181` only increments a process-local counter, and CM learns LCVs
-only from `backend.c:1053-1070`, `backend.c:1670-1681` and `yb_auth_passthrough.c:729-749`.
+Mechanism, from the model: backend S idles on n1. A SIGHUP changes a PGC_BACKEND GUC and
+the control backend reloads. Nothing reports the new LCV to the router until a new auth or
+spawn on n1. Once one does, every older backend is marked or timed. An existing gradual
+session is then routed to a new backend, and its PGC_BACKEND value changes mid-session.
+
+Code: nothing pushes an LCV to Odyssey on SIGHUP.
+- The wrapper only forwards its own config SIGHUP (`ysql_conn_mgr_wrapper.cc:434-438`).
+- `sighandler.c:189-192` → `od_system_config_reload` has no LCV code.
+- Odyssey learns LCVs only at `backend.c:1068`, `backend.c:1679` and
+  `yb_auth_passthrough.c:746`.
+- `postmaster.c:3177-3181` increments only a process-local counter.
+
+Judgement, from the FS wording:
+- The functional spec (`ycm-setup.md:270-278`; gflag help `ybc_gflags.cc:135-141`) covers
+  only ALTER ROLE/DATABASE SET. Gradual means "existing sessions gradually adopt the new
+  settings", and new sessions "always observe the effects of ALTER statements". SIGHUP and
+  PGC_BACKEND are not mentioned.
+- PostgreSQL's contract for a PGC_BACKEND change on reload is that it never reaches an
+  existing session (`guc.c:11831-11840`).
+- New sessions are not harmed. Their auth report precedes their first attach, so they get
+  a fresh backend; FR1s/FR1b pass with AUTH = backend, and the exception is finding 2.
+  An idle stale backend is therefore not a correctness problem in itself, and the
+  "never expires" framing of this finding's first version was wrong.
+- The real anomaly is the reverse. Under gradual, an existing session does see the
+  PGC_BACKEND change, and whether and when depends on other clients connecting. That is
+  neither PG behaviour nor any documented behaviour.
+- Verdict: an FS gap. Either document that gradual applies reload-time PGC_BACKEND changes
+  to existing sessions, or make the SIGHUP component not move existing sessions. Under
+  connection_static the LCV is fixed per session, so PG semantics hold. Under fluctuating
+  the flip is already documented.
+- The UFD cron makes the flip prompt instead of traffic-dependent. It does not remove it.
+
+Property consequence:
+- P11b's SIGHUP half ("idle backends eventually hold the latest SIGHUP defaults") is not
+  required by the FS or by PG, so P11b over-states the requirement.
+- P11c, the ALTER half, is the FS-backed staleness property. P11b is kept in the spec for
+  the record.
+- The new property P13 states the PG rule: within one session, the SIGHUP component it
+  runs on never changes.
+
+P13 results:
+- It passes under connection_static (on_read and pushed) and fails under gradual and
+  fluctuating (both propagations).
+- The gradual counterexample does not need unrelated traffic. Client c1's backend is
+  expired by an ALTER (TTL timed). The SIGHUP lands, c1's next statement spawns a fresh
+  backend, and that backend carries both the ALTER and the SIGHUP.
+- So under gradual, any migration also carries every reload-time PGC_BACKEND change. PG's
+  rule for those changes can only hold if gradual stops moving existing sessions, which is
+  the same choice the FS has to make above.
+
+**Verification: confirmed and reproduced live** (same setup and directory as finding 1).
+- Sequence: A runs on a backend with `log_disconnections=on`. `set_flag` switches it to
+  `off`.
+- Observed: A stays on that pid, still `on`, at +5 s and at +10 s. Client D connects; its
+  auth reports 4 > 3 and every backend is marked. D gets `off`, and A moves to a new
+  backend and flips to `off` mid-session.
+
+### 3a. A reload bumps the LCV even when no PGC_BACKEND value changed (pool churn; candidate product issue)
+
+`guc.c:11817-11829` sets `yb_conn_mgr_sighup_had_backend_guc_change` for every
+PGC_BACKEND or PGC_SU_BACKEND entry processed under PGC_SIGHUP with `changeVal`, whether
+or not the value differs; the code comment says so. `ProcessConfigFile` applies every entry
+in the file. So every reload with any such GUC in `ysql_pg.conf` raises the node's LCV and,
+at the next connection, expires every pooled backend.
+
+Consequences:
+- Pointless pool churn.
+- Finding 1's masking window opens on any reload, not only a real change.
+- Finding 3's mid-session flip can happen with no value change at all. In that case the
+  flip is invisible to the session, but the backend is replaced.
+
+Model: `Sighup(n)` is already "a reload that bumps the counter", so the bump is covered.
+What the model cannot express is that the value did not change. That needs a separate
+config-content version, bumped only by a real change. With it, a property "no backend is
+expired whose defaults equal the current ones" would catch this.
 
 ### 4. Cross-node ALTER not propagated under on_read (P11b/P11c, 2 nodes, MAXSIGHUP 0; expected, UFD motivation)
 
@@ -129,7 +233,8 @@ it passes under pushed.
 `lcvServer = routerMax[n]` holds in all of findings 1, 3 and 4: the router's maximum is
 itself stale or masked, so stale backends agree with it. P11 is kept unchanged, and P11b
 states the intended property: live backends hold the current catalog and SIGHUP defaults.
-P11b is the property to judge by.
+Per finding 3, judge staleness by P11c (ALTER), not P11b; P11b's SIGHUP half is not an
+FS requirement.
 
 ### 6. Expected or documented failures
 

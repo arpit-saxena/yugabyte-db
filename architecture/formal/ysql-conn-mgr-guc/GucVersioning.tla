@@ -389,6 +389,11 @@ FR1b == [][\A c \in CLIENTS, s \in SERVERS :
 FR1c == [][\A c \in CLIENTS, s \in SERVERS :
             ExecOn(c, s) => sCat'[s] >= catAtAuth[c]]_vars
 
+\* P13: PG semantics for a PGC_BACKEND change from a SIGHUP: it never reaches
+\* an existing session, so the SIGHUP component a session runs on is fixed.
+P13 == [][\A c \in CLIENTS, s \in SERVERS :
+            (ExecOn(c, s) /\ obsSig[c] # -1) => sSig'[s] = obsSig[c]]_vars
+
 \* P11 (plan): eventually every live backend has lcvServer = routerMax[n].
 P11 == \A n \in NODES :
         <>[](\A s \in LiveSrv : s[1] = n => lcvS[s] = routerMax[n])
