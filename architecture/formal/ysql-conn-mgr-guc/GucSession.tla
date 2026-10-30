@@ -23,10 +23,19 @@ CONSTANTS
     OPS,          \* statement kinds clients may issue (see STMTS)
     STARTUPKEYS,  \* startup option choices (see STARTUPS)
     GFIX,         \* FALSE = product code; TRUE = hypothetical fix, see Deploy
+    INTERNALVARS, \* model the CM-injected yb_ycm_internal_client_port (iP)
+    PORTS,        \* model values: one per logical connection (client port)
     TRACE         \* record the last action in lastAct (for readable traces)
 
-GUCS == {"uR", "uN", "sU", "bK"}
+\* iP is yb_ycm_internal_client_port (guc.c ConfigureNamesInt: PGC_USERSET,
+\* not GUC_REPORT).  CM puts it, and _client_addr, into every client's startup
+\* packet with a per-connection value (frontend.c:3015-3036, the client port),
+\* so it reaches yb_vars_startup and is replayed through 'G'.  _client_addr is
+\* the same for clients on one host and adds nothing beyond iP.
+GUCS == {"uR", "uN", "sU", "bK"} \cup (IF INTERNALVARS THEN {"iP"} ELSE {})
+ClientG == GUCS \ {"iP"}                    \* GUCs a client SETs / passes in -c
 Vals == {"d", "v1", "v2"}
+AllVals == Vals \cup PORTS
 NoVal == "-"                                \* absent from a kiwi var list
 
 \* GucSource, collapsed.  PGC_S_OVERRIDE sits between CLIENT and SESSION, so
@@ -41,6 +50,7 @@ Ctx(g) == CASE g = "uR" -> "USERSET"
             [] g = "uN" -> "USERSET"
             [] g = "sU" -> "SUSET"
             [] g = "bK" -> "BACKEND"
+            [] g = "iP" -> "USERSET"
 IsReport(g) == g = "uR"
 IsString(g) == g = "uR"
 SetCtx(g) == Ctx(g) \in {"SUSET", "USERSET"}
@@ -69,12 +79,12 @@ STARTUPS == { StartupOpt(k) : k \in {x \in STARTUPKEYS : x # "sU" \/ SUPER} }
 (***************************************************************************)
 S(k, g, v) == [k |-> k, g |-> g, v |-> v]
 \* OPS (a constant) selects statement kinds, "ERR" being the failing SETs.
-SetG == {h \in GUCS : SqlAllowed(h)}
+SetG == {h \in ClientG : SqlAllowed(h)}
 AllStmts ==
     { S("SET", g, v)   : g \in SetG, v \in SETVALS }
  \cup { S("LOCAL", g, v) : g \in SetG, v \in SETVALS }
  \cup { S("RESET", g, "-") : g \in SetG }
- \cup { S("ERR", g, "v1") : g \in GUCS \ SetG }
+ \cup { S("ERR", g, "v1") : g \in ClientG \ SetG }
  \cup { S(k, "-", "-") : k \in {"RESETALL", "BEGIN", "COMMIT", "ROLLBACK",
                                   "SELECT", "SETROLE"} }
 STMTS == {st \in AllStmts : st.k \in OPS}
@@ -96,11 +106,11 @@ FreshRec == [val |-> "d", src |-> DFLT, rv |-> "d", rs |-> DFLT,
              nr |-> FALSE, vr |-> FALSE, dr |-> FALSE]
 FreshMap == [g \in GUCS |-> FreshRec]
 
-Recs == [val : Vals, src : {DFLT, CLIENT, SESSION}, rv : Vals,
+Recs == [val : AllVals, src : {DFLT, CLIENT, SESSION}, rv : AllVals,
          rs : {DFLT, CLIENT, SESSION},
-         st : {"NONE", "SET", "LOCAL", "SET_LOCAL"}, pv : Vals,
-         ps : {DFLT, CLIENT, SESSION}, mv : Vals,
-         sd : BOOLEAN, sdv : Vals, sds : {DFLT, CLIENT, SESSION},
+         st : {"NONE", "SET", "LOCAL", "SET_LOCAL"}, pv : AllVals,
+         ps : {DFLT, CLIENT, SESSION}, mv : AllVals,
+         sd : BOOLEAN, sdv : AllVals, sds : {DFLT, CLIENT, SESSION},
          nr : BOOLEAN, vr : BOOLEAN, dr : BOOLEAN]
 
 \* guc.c:yb_should_report_guc (CM client).  Every kind here has
@@ -320,6 +330,7 @@ Deploy(vstart, vsess, srv) ==
                         IF g \in slist THEN SetValue(s2.m[g], g, vsess[g], "SET")
                         ELSE s2.m[g]], TRUE), "IDLE")
     IN [srv |-> s3,
+        reset |-> need,
         msgs |-> need \/ glist # {} \/ slist # {},
         leftSaved |-> need /\ \E g \in GUCS : s1.m[g].sd,
         savedTwice |-> \E g \in glist : s1.m[g].sd,
@@ -332,18 +343,22 @@ VARIABLES
     cState, conns, stmts, roleIssued,
     ref, refT, refLast,                    \* reference backend per client
     varsStartup, varsSession, attached, cInTxn,
+    connId, usedPorts,                     \* port of the current connection
     \* servers
     gucs, sT, sVarsDefault, sVarsSession, sState, srvSticky, latch,
-    \* history flags for P3/P9/warnings
-    badReplay, gLeftSaved, savedTwice, deployErr,
+    lastConn,                              \* connId of the last attached client
+    \* history flags for P3/P9/warnings and the reset statistics
+    badReplay, gLeftSaved, savedTwice, deployErr, switchNoReset, skippedReset,
     \* names of per-statement checks (P1*, P2*) that failed at some statement
     bad,
     lastAct
 
 cvars == <<cState, conns, stmts, roleIssued, ref, refT, refLast,
-           varsStartup, varsSession, attached, cInTxn>>
-svars == <<gucs, sT, sVarsDefault, sVarsSession, sState, srvSticky, latch>>
-hvars == <<badReplay, gLeftSaved, savedTwice, deployErr, bad>>
+           varsStartup, varsSession, attached, cInTxn, connId, usedPorts>>
+svars == <<gucs, sT, sVarsDefault, sVarsSession, sState, srvSticky, latch,
+           lastConn>>
+hvars == <<badReplay, gLeftSaved, savedTwice, deployErr, switchNoReset,
+           skippedReset, bad>>
 vars == <<cvars, svars, hvars, lastAct>>
 
 Act(x) == lastAct' = IF TRACE THEN x ELSE "-"
@@ -360,6 +375,9 @@ Init ==
     /\ varsSession = [c \in CLIENTS |-> NoVars]
     /\ attached = [c \in CLIENTS |-> NoServer]
     /\ cInTxn = [c \in CLIENTS |-> FALSE]
+    /\ connId = [c \in CLIENTS |-> NoServer]
+    /\ usedPorts = {}
+    /\ lastConn = [s \in SERVERS |-> NoServer]
     /\ gucs = [s \in SERVERS |-> FreshMap]
     /\ sT = [s \in SERVERS |-> "IDLE"]
     /\ sVarsDefault = [s \in SERVERS |-> NoVars]
@@ -371,16 +389,24 @@ Init ==
     /\ gLeftSaved = FALSE
     /\ savedTwice = FALSE
     /\ deployErr = FALSE
+    /\ switchNoReset = FALSE
+    /\ skippedReset = FALSE
     /\ bad = {}
     /\ lastAct = "init"
 
 \* Client connects.  The auth backend's 'r' packets with SOURCE_STARTUP fill
 \* yb_vars_startup (backend.c startup 'r' handling / yb_auth_passthrough.c).
 \* Reference: startup options become value and reset value, source CLIENT.
+\* Each connection has a fresh port p; with INTERNALVARS it is also the iP
+\* startup var (frontend.c:3015-3036 adds it before auth, the auth backend
+\* reports it with SOURCE_STARTUP, flags 0x2).
 Connect(c) ==
     /\ cState[c] = "Off"
     /\ conns[c] < MAXCONNS
-    /\ \E st \in STARTUPS :
+    /\ \E st0 \in STARTUPS, p \in PORTS \ usedPorts :
+       LET st == IF INTERNALVARS THEN [st0 EXCEPT !["iP"] = p] ELSE st0 IN
+         /\ connId' = [connId EXCEPT ![c] = p]
+         /\ usedPorts' = usedPorts \cup {p}
          /\ ref' = [ref EXCEPT ![c] = [g \in GUCS |->
                 IF st[g] = NoVal THEN FreshRec
                 ELSE [FreshRec EXCEPT !.val = st[g], !.src = CLIENT,
@@ -455,9 +481,14 @@ Statement(c, stm) ==
               /\ gLeftSaved' = (gLeftSaved \/ (isNew /\ dep.leftSaved))
               /\ savedTwice' = (savedTwice \/ (isNew /\ dep.savedTwice))
               /\ deployErr' = (deployErr \/ (isNew /\ dep.err))
+              /\ switchNoReset' = (switchNoReset \/ (isNew /\ sState[s] = "Idle"
+                                     /\ lastConn[s] # connId[c] /\ ~dep.reset))
+              /\ skippedReset' = (skippedReset \/ (isNew /\ sState[s] = "Idle"
+                                     /\ ~dep.reset))
+              /\ lastConn' = [lastConn EXCEPT ![s] = connId[c]]
               /\ Act(<<"Stmt", c, stm, s, IF isNew THEN IF dep.msgs THEN "attach+deploy" ELSE "attach" ELSE "", IF detach THEN "detach" ELSE "">>)
     /\ stmts' = [stmts EXCEPT ![c] = @ + 1]
-    /\ UNCHANGED <<cState, conns, varsStartup>>
+    /\ UNCHANGED <<cState, conns, varsStartup, connId, usedPorts>>
 
 (***************************************************************************)
 (* Client disconnect, frontend.c OD_OK/OD_ECLIENT_READ -> reset.c:od_reset *)
@@ -490,15 +521,16 @@ Disconnect(c) ==
                     /\ sState' = [sState EXCEPT ![s] = "Free"]
                     /\ srvSticky' = [srvSticky EXCEPT ![s] = FALSE]
                     /\ latch' = [latch EXCEPT ![s] = FALSE]
+                    /\ UNCHANGED lastConn
                ELSE /\ gucs' = [gucs EXCEPT ![s] = srv.m]
                     /\ sT' = [sT EXCEPT ![s] = srv.t]
                     /\ sVarsDefault' = [sVarsDefault EXCEPT ![s] = srv.vd]
                     /\ sVarsSession' = [sVarsSession EXCEPT ![s] = srv.vs]
                     /\ sState' = [sState EXCEPT ![s] = "Idle"]
                     /\ srvSticky' = [srvSticky EXCEPT ![s] = stk]
-                    /\ UNCHANGED latch
+                    /\ UNCHANGED <<latch, lastConn>>
     /\ Act(<<"Disconnect", c>>)
-    /\ UNCHANGED <<conns, stmts, hvars>>
+    /\ UNCHANGED <<conns, stmts, hvars, connId, usedPorts>>
 
 \* Terminal stutter so bounded runs do not report deadlock.
 Done == UNCHANGED vars
@@ -527,14 +559,17 @@ TypeOK ==
     /\ ref \in [CLIENTS -> [GUCS -> Recs]]
     /\ refT \in [CLIENTS -> {"IDLE", "INTX", "FAILED"}]
     /\ refLast \in [CLIENTS -> [GUCS -> Vals]]
-    /\ varsStartup \in [CLIENTS -> [GUCS -> Vals \cup {NoVal}]]
-    /\ varsSession \in [CLIENTS -> [GUCS -> Vals \cup {NoVal}]]
+    /\ varsStartup \in [CLIENTS -> [GUCS -> AllVals \cup {NoVal}]]
+    /\ varsSession \in [CLIENTS -> [GUCS -> AllVals \cup {NoVal}]]
+    /\ connId \in [CLIENTS -> PORTS \cup {NoServer}]
+    /\ usedPorts \subseteq PORTS
+    /\ lastConn \in [SERVERS -> PORTS \cup {NoServer}]
     /\ attached \in [CLIENTS -> SERVERS \cup {NoServer}]
     /\ cInTxn \in [CLIENTS -> BOOLEAN]
     /\ gucs \in [SERVERS -> [GUCS -> Recs]]
     /\ sT \in [SERVERS -> {"IDLE", "INTX", "FAILED"}]
-    /\ sVarsDefault \in [SERVERS -> [GUCS -> Vals \cup {NoVal}]]
-    /\ sVarsSession \in [SERVERS -> [GUCS -> Vals \cup {NoVal}]]
+    /\ sVarsDefault \in [SERVERS -> [GUCS -> AllVals \cup {NoVal}]]
+    /\ sVarsSession \in [SERVERS -> [GUCS -> AllVals \cup {NoVal}]]
     /\ sState \in [SERVERS -> {"Free", "Idle", "Active"}]
     /\ srvSticky \in [SERVERS -> BOOLEAN]
     /\ latch \in [SERVERS -> BOOLEAN]
@@ -611,10 +646,17 @@ P9b_ResetClearsSaved == ~gLeftSaved
 \* yb_conn_mgr_save_default_value WARNING "This is a bug"
 NoDoubleSave == ~savedTwice
 
+\* Attaching to an Idle server last used by a different connection always
+\* sends 'g' (the lazy "no reset" path of deploy.c:od_deploy is not taken).
+GResetOnEveryClientSwitch == ~switchNoReset
+
+\* Witness, expected to FAIL: some attach to an Idle server skips 'g'.
+NoAttachWithoutReset == ~skippedReset
+
 ListInclusion ==
     \A c \in CLIENTS : On(c) /\ Att(c) /\ ~cInTxn[c] =>
         \A g \in GUCS : sVarsSession[attached[c]][g] # NoVal =>
                         varsSession[c][g] # NoVal
 
-Sym == Permutations(CLIENTS) \cup Permutations(SERVERS)
+Sym == Permutations(CLIENTS) \cup Permutations(SERVERS) \cup Permutations(PORTS)
 =============================================================================
