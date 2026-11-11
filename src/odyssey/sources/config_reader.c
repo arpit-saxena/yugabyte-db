@@ -3166,7 +3166,11 @@ error:
 	return NOT_OK_RESPONSE;
 success:
 	if (!config->client_max_routing) {
+#ifndef YB_SUPPORT_FOUND
 		config->client_max_routing = config->workers * 64;
+#else // YB_SUPPORT_FOUND
+		config->client_max_routing = config->workers * 16;
+#endif // YB_SUPPORT_FOUND
 	}
 
 	od_config_setup_default_tcp_usr_timeout(config);
