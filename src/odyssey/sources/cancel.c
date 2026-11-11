@@ -14,8 +14,10 @@ int od_cancel(od_global_t *global, od_rule_storage_t *storage, kiwi_key_t *key,
 {
 	od_instance_t *instance = global->instance;
 	od_log(&instance->logger, "cancel", NULL, NULL, "cancel for %s%.*s",
+	       /* YB */
 	       server_id->id_prefix, (int)sizeof(server_id->id), server_id->id);
 	od_server_t *server = od_server_allocate(0);
+	/* YB */
 	if (server == NULL) {
 		return -1;
 	}

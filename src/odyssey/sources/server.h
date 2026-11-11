@@ -24,7 +24,6 @@ struct od_server {
 	machine_tls_t *tls;
 	od_io_t io;
 	od_relay_t relay;
-	int is_allocated;
 	int is_transaction;
 #ifndef YB_SUPPORT_FOUND
 	/* Copy stmt state */
@@ -142,7 +141,6 @@ static inline void od_server_init(od_server_t *server, int reserve_prep_stmts)
 	server->global = NULL;
 	server->tls = NULL;
 	server->idle_time = 0;
-	server->is_allocated = 0;
 	server->is_transaction = 0;
 #ifndef YB_SUPPORT_FOUND
 	server->done_fail_response_received = 0;
@@ -208,23 +206,22 @@ static inline od_server_t *od_server_allocate(int reserve_prep_stmts)
 	if (server == NULL)
 		return NULL;
 	od_server_init(server, reserve_prep_stmts);
-	server->is_allocated = 1;
 	return server;
 }
 
 static inline void od_server_free(od_server_t *server)
 {
-	if (server->is_allocated) {
-		od_relay_free(&server->relay);
-		od_io_free(&server->io);
-		yb_od_parse_queue_free(&server->parse_queue);
-		if (server->prep_stmts) {
-			od_hashmap_free(server->prep_stmts);
-		}
-		yb_kiwi_vars_free(&server->yb_vars_default);
-		yb_kiwi_vars_free(&server->yb_vars_session);
-		free(server);
+	od_relay_free(&server->relay);
+	od_io_free(&server->io);
+	/* YB */
+	yb_od_parse_queue_free(&server->parse_queue);
+	if (server->prep_stmts) {
+		od_hashmap_free(server->prep_stmts);
 	}
+	/* YB */
+	yb_kiwi_vars_free(&server->yb_vars_default);
+	yb_kiwi_vars_free(&server->yb_vars_session);
+	free(server);
 }
 
 static inline void od_server_sync_request(od_server_t *server, uint64_t count)

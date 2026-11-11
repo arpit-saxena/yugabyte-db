@@ -49,6 +49,7 @@ od_hashmap_list_item_t *yb_od_hashmap_find_item(od_hashmap_t *hm,
 od_hashmap_elt_t *od_hashmap_find(od_hashmap_t *hm, yb_od_hash_64_t keyhash,
 				  od_hashmap_elt_t *key);
 
+/* YB */
 extern bool yb_od_hashmap_find_key_and_remove(od_hashmap_t *hm,
 					      yb_od_hash_64_t keyhash,
 					      od_hashmap_elt_t **matched_keys,
@@ -57,12 +58,25 @@ extern bool yb_od_hashmap_find_key_and_remove(od_hashmap_t *hm,
 extern bool yb_od_hashmap_remove_key(od_hashmap_t *hm, yb_od_hash_64_t keyhash,
 				     od_hashmap_elt_t *key);
 
-/*
- * This function inserts a new key into the hashmap.
- * If hashmap already contains a value assotiated with provided key,
- * it will be rewritten.
- */
+/* This function insert new key into hashmap
+* If hashmap already contains value assotiated with key, 
+* it will be rewritten.
+*/
+/* YB */
 int od_hashmap_insert(od_hashmap_t *hm, yb_od_hash_64_t keyhash,
 		      od_hashmap_elt_t *key, od_hashmap_elt_t **value);
+
+/* LOCK-UNLOCK API */
+/* given key and its 
+* keyhash (murmurhash etc) return poitner 
+* to hashmap mutex-locked value pointer  */
+od_hashmap_elt_t *od_hashmap_lock_key(od_hashmap_t *hm, od_hash_t keyhash,
+				      od_hashmap_elt_t *key);
+
+int od_hashmap_unlock_key(od_hashmap_t *hm, od_hash_t keyhash,
+			  od_hashmap_elt_t *key);
+
+/* clear hashmap */
+od_retcode_t od_hashmap_empty(od_hashmap_t *hm);
 
 #endif /* OD_HASHMAP_H */

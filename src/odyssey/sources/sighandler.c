@@ -119,6 +119,7 @@ od_attribute_noreturn() void od_system_shutdown(od_system_t *system,
 #ifdef OD_SYSTEM_SHUTDOWN_CLEANUP
 	od_worker_pool_stop(worker_pool);
 
+	/* Prevent OpenSSL usage during deinitialization */
 	od_worker_pool_wait();
 #endif
 

@@ -339,8 +339,14 @@ static inline int od_auth_frontend_scram_sha_256(od_client_t *client)
 	char *mechanisms[2] = { "SCRAM-SHA-256", "SCRAM-SHA-256-PLUS" };
 
 	/* request AuthenticationSASL */
-	machine_msg_t *msg =
-		kiwi_be_write_authentication_sasl(NULL, mechanisms, 2);
+	machine_msg_t *msg;
+
+	if (client->tls == NULL) {
+		msg = kiwi_be_write_authentication_sasl(NULL, mechanisms, 1);
+	} else {
+		msg = kiwi_be_write_authentication_sasl(NULL, mechanisms, 2);
+	}
+
 	if (msg == NULL)
 		return -1;
 
@@ -981,7 +987,7 @@ static inline int od_auth_backend_sasl_continue(od_server_t *server,
 	}
 #endif
 	od_debug(&instance->logger, "auth", NULL, server,
-		 "continue SASL authentication");
+		 "continue SASL authentication using password %s", password);
 
 	/* SASLResponse Message */
 	machine_msg_t *msg = od_scram_create_client_final_message(
@@ -1154,6 +1160,10 @@ int od_auth_backend(od_server_t *server, machine_msg_t *msg,
 		return -1;
 	}
 
+	od_debug(&instance->logger, "auth", NULL, server,
+		 "recieved msg type %u", auth_type);
+
+	/* YB */
 	/* handle communication for the auth backend separately. */
 	if (client->yb_is_authenticating)
 	{

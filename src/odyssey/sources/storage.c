@@ -75,6 +75,10 @@ od_rule_storage_t *od_rules_storage_allocate(void)
 	storage->target_session_attrs = OD_TARGET_SESSION_ATTRS_ANY;
 	storage->rr_counter = 0;
 
+#define OD_STORAGE_DEFAULT_HASHMAP_SZ 420u
+
+	storage->acache = od_hashmap_create(OD_STORAGE_DEFAULT_HASHMAP_SZ);
+
 	od_list_init(&storage->link);
 	return storage;
 }
@@ -102,6 +106,10 @@ void od_rules_storage_free(od_rule_storage_t *storage)
 		}
 
 		free(storage->endpoints);
+	}
+
+	if (storage->acache) {
+		od_hashmap_free(storage->acache);
 	}
 
 	od_list_unlink(&storage->link);
@@ -176,6 +184,8 @@ od_rule_storage_t *od_rules_storage_copy(od_rule_storage_t *storage)
 			copy->endpoints[i].port = storage->endpoints[i].port;
 		}
 	}
+
+	/* storage auth cache not copied */
 
 	copy->target_session_attrs = storage->target_session_attrs;
 

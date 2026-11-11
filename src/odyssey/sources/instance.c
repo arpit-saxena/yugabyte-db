@@ -64,6 +64,49 @@ void od_usage(od_instance_t *instance, char *path)
 	       path);
 }
 
+void od_config_testing(od_instance_t *instance)
+{
+	od_error_t error;
+	od_router_t router;
+	od_hba_t hba;
+	od_global_t global;
+	od_extention_t extentions;
+
+	od_error_init(&error);
+	od_router_init(&router, &global);
+	od_hba_init(&hba);
+	od_extentions_init(&extentions);
+
+	int rc;
+	rc = od_config_reader_import(&instance->config, &router.rules, &error,
+				     &extentions, &global, &hba.rules,
+				     instance->config_file);
+	if (rc == -1) {
+		od_error(&instance->logger, "config", NULL, NULL, "%s",
+			 error.error);
+		goto error;
+	}
+
+	/* validate configuration */
+	rc = od_config_validate(&instance->config, &instance->logger);
+	if (rc == -1) {
+		goto error;
+	}
+
+	/* validate rules */
+	rc = od_rules_validate(&router.rules, &instance->config,
+			       &instance->logger);
+	if (rc == -1) {
+		goto error;
+	}
+
+	od_log(&instance->logger, "config", NULL, NULL, "config is valid");
+
+error:
+	od_router_free(&router);
+	return NOT_OK_RESPONSE;
+}
+
 static inline void od_bind_version()
 {
 	od_asprintf((char **__restrict) & argp_program_version,
@@ -77,6 +120,7 @@ static inline od_retcode_t od_args_init(od_arguments_t *args,
 	args->silent = 0;
 	args->verbose = 0;
 	args->console = 0;
+	args->test = 0;
 	args->instance = instance;
 	return OK_RESPONSE;
 }
@@ -292,6 +336,13 @@ int od_instance_main(od_instance_t *instance, int argc, char **argv)
 	/* validate rules */
 	rc = od_rules_validate(&router.rules, &instance->config,
 			       &instance->logger);
+	if (rc == -1) {
+		goto error;
+	}
+
+	/* auto-generate default rule for auth_query if none specified */
+	rc = od_rules_autogenerate_defaults(&router.rules, &instance->logger);
+
 	if (rc == -1) {
 		goto error;
 	}
