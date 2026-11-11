@@ -1165,6 +1165,7 @@ static inline int od_config_reader_backend_pgoptions(od_config_reader_t *reader,
 		if (token.value.num == '{')
 			break;
 		/* fall through */
+		yb_od_attribute_fallthrough;
 	default:
 		od_config_reader_error(reader, &token,
 				       "incorrect or unexpected parameter");
@@ -1223,6 +1224,7 @@ static inline int od_config_reader_backend_pgoptions(od_config_reader_t *reader,
 				return OK_RESPONSE;
 			}
 			/* fall through */
+			yb_od_attribute_fallthrough;
 		case OD_PARSER_KEYWORD:
 		default:
 			od_config_reader_error(
