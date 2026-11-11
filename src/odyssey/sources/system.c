@@ -885,7 +885,9 @@ static inline void od_system(void *arg)
 			return;
 	}
 
+#ifndef YB_SUPPORT_FOUND
 	od_rules_groups_checkers_run(&instance->logger, &router->rules);
+#endif // YB_SUPPORT_FOUND
 }
 
 void od_system_init(od_system_t *system)

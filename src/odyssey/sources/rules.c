@@ -180,6 +180,7 @@ static inline int od_rule_update_auth(od_route_t *route, void **argv)
 	return 0;
 }
 
+#ifndef YB_SUPPORT_FOUND
 void od_rules_group_checker_run(void *arg)
 {
 	od_group_checker_run_args *args = (od_group_checker_run_args *)arg;
@@ -454,6 +455,7 @@ od_retcode_t od_rules_groups_checkers_run(od_logger_t *logger,
 
 	return OK_RESPONSE;
 }
+#endif // YB_SUPPORT_FOUND
 
 od_rule_t *od_rules_add(od_rules_t *rules)
 {
