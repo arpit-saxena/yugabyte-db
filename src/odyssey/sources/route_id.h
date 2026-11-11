@@ -52,26 +52,8 @@ static inline void od_route_id_free(od_route_id_t *id)
 
 static inline int od_route_id_copy(od_route_id_t *dest, od_route_id_t *id)
 {
-#ifndef YB_SUPPORT_FOUND
-	dest->database = malloc(id->database_len);
-	if (dest->database == NULL)
-		return -1;
-	memcpy(dest->database, id->database, id->database_len);
-	dest->database_len = id->database_len;
-
-	dest->user = malloc(id->user_len);
-	if (dest->user == NULL) {
-		free(dest->database);
-		dest->database = NULL;
-		return -1;
-	}
-	memcpy(dest->user, id->user, id->user_len);
-	dest->user_len = id->user_len;
-
-#else // YB_SUPPORT_FOUND
 	dest->yb_db_oid = id->yb_db_oid;
 	dest->yb_user_oid = id->yb_user_oid;
-#endif // YB_SUPPORT_FOUND
 	dest->physical_rep = id->physical_rep;
 	dest->logical_rep = id->logical_rep;
 	return 0;
