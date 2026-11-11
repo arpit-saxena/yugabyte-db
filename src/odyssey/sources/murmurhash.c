@@ -9,8 +9,6 @@
 #include <machinarium.h>
 #include <odyssey.h>
 
-#ifndef YB_SUPPORT_FOUND
-
 // from https://github.com/aappleby/smhasher/blob/master/src/MurmurHash1.cpp
 //
 
@@ -72,8 +70,6 @@ od_hash_t od_murmur_hash(const void *raw, size_t len)
 
 	return h;
 }
-
-#endif // YB_SUPPORT_FOUND
 
 /*
  * YB: MurmurHash2 64-bit (MurmurHash64A) by Austin Appleby, public domain.
