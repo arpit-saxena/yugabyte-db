@@ -1941,7 +1941,7 @@ bool od_name_in_rule(od_rule_t *rule, char *name)
 {
 	if (rule->group) {
 		bool matched = strcmp(rule->user_name, name) == 0;
-		for (size_t i = 0; i < rule->users_in_group; i++) {
+		for (int i = 0; i < rule->users_in_group; i++) {
 			matched |= (strcmp(rule->user_names[i], name) == 0);
 		}
 		return matched;
