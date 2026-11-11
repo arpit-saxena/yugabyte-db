@@ -18,7 +18,8 @@ int od_backend_request_sync_point(od_server_t *server)
 	if (msg == NULL) {
 		return -1;
 	}
-	rc = od_write(&server->io, msg);
+	/* YB: od_write takes machine_msg_t ** */
+	rc = od_write(&server->io, &msg);
 	if (rc == -1) {
 		od_error(&instance->logger, "sync-point", server->client,
 			 server, "write error: %s", od_io_error(&server->io));
