@@ -241,7 +241,7 @@ int od_auth_query(od_client_t *client, char *peer)
 		od_router_close(router, auth_client);
 		od_router_unroute(router, auth_client);
 		od_client_free_extended(auth_client);
-		return NOT_OK_RESPONSE;
+		goto error;
 	}
 	query[yb_max_query_size] = '\0';
 	char *format_pos = rule->auth_query;
