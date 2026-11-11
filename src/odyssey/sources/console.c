@@ -1348,12 +1348,15 @@ static inline int od_console_show_clients_callback(od_client_t *client,
 	if (rc == NOT_OK_RESPONSE)
 		return NOT_OK_RESPONSE;
 	/* ptr */
-	data_len = od_snprintf(data, sizeof(data), "%p", client);
+	/* YB */
+	data_len = od_snprintf(data, sizeof(data), "%p", (void *)client);
 	rc = kiwi_be_write_data_row_add(stream, offset, data, data_len);
 	if (rc == NOT_OK_RESPONSE)
 		return NOT_OK_RESPONSE;
 	/* coro */
-	data_len = od_snprintf(data, sizeof(data), "%d", client->coroutine_id);
+	/* YB */
+	data_len = od_snprintf(data, sizeof(data), "%" PRIu64,
+			       client->coroutine_id);
 	rc = kiwi_be_write_data_row_add(stream, offset, data, data_len);
 	if (rc == NOT_OK_RESPONSE) {
 		return NOT_OK_RESPONSE;
