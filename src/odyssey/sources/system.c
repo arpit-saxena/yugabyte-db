@@ -400,8 +400,9 @@ static inline void od_system_server(void *arg)
 		       (uint32_t)instance->config.client_max_routing) {
 			if (!warning_emitted) {
 				/* TODO: AB: Use WARNING here, it's not an error */
+				/* YB: A worker owns the client by now, do not pass it */
 				od_error(&instance->logger,
-					 "client_max_routing", client, NULL,
+					 "client_max_routing", NULL, NULL,
 					 "client is waiting in routing queue");
 				warning_emitted = true;
 			}
