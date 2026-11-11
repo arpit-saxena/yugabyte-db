@@ -1,5 +1,5 @@
 local_path,upstream_path,repository,commit
-src/odyssey,,https://github.com/yandex/odyssey,dc2122ac90a90a71786c5f7550245584fbf9a0b5
+src/odyssey,,https://github.com/yandex/odyssey,ddbbb698b7f202cf753fdca3401014de2ff08fdd
 src/postgres,,https://github.com/yugabyte/postgres,88057d5e2e2c26ac1415f879d14785d1a650895b
 src/postgres/contrib/passwordcheck,passwordcheck_extra,https://github.com/michaelpq/pg_plugins,66a75ea0ca0706bef7b1e17055aa5fd364189fec
 src/postgres/contrib/passwordcheck/expected/passwordcheck.out,contrib/passwordcheck/expected/passwordcheck.out,https://github.com/yugabyte/postgres,src/postgres
