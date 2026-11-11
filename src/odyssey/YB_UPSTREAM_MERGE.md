@@ -37,9 +37,10 @@ TestSessionParameters#testSeedMakesConnectionSticky).
 | 3 | dc2122ac90a (#578) | 19 | f9d55d894dc | = master at 1c0c66423f7 |
 | 4 | ddbbb698b7f (#587) | 6 | a094c0e2c62 | = master at d69940aae41 |
 | 5 | b0e2b9f811a (#623) | 24 | 0e77bad4a84 | = master at 7c6f385c034 |
+| 6 | 87fa7d152d2 (#741) | 83 | 5a6c4cd2387 | = master at f2439459514; 6 classes rerun at 0891322f7d6 |
 
 Target: the latest upstream release, v1.5.2 (2cca6bf26c1, on REL_1_5_2), 877 commits past
-the import point; 89 are merged. Steps 1-3 were ~20 upstream commits each. From step 5 on
+the import point; 172 are merged. Steps 1-3 were ~20 upstream commits each. From step 5 on
 there is one step per upstream release tag and per upstream mass move or rewrite, each of
 those isolated in its own step.
 
@@ -59,6 +60,15 @@ are reviewed by reading, and kept out of YB builds where a YB flow can reach the
   ddbbb698b7f): YB has its own design; upstream's Parse/Describe/Bind code and helpers sit
   under #ifndef YB_SUPPORT_FOUND, as do its extra reset sync point (9d0de5d4e5e), its
   od_relay_step read condition and its sync asserts.
+- Step 6, not applied to YB: the removal of the client notify io (4fde8dbad4c). Without
+  the eventfd a killed idle client is noticed only at its next packet, which YB's
+  cleanup of idle clients on inactive routes (b76eff1c781) depends on. YB's code stays
+  under #ifdef YB_SUPPORT_FOUND in client.h, frontend.c and system.c.
+- Step 6, under #ifndef YB_SUPPORT_FOUND: the pending-aware relay read path
+  (535a27e73ba; 18fa11f1663), od_relay_full_packet_required (32c1450186; YB always
+  assembles full packets), the new iov assert in od_frontend_attach (f4a1986aa69), the
+  group checker call on reload (849dd44198b), the client_max_routing default of
+  workers * 64 (f081cf98c74; YB keeps workers * 16, 0891322f7d6).
 - sequential_routing (c827bb4774b) and rule groups (8ba1e233a12): the YB config template
   sets neither. The group checker is under #ifndef YB_SUPPORT_FOUND (b8004595a12).
 
@@ -93,6 +103,19 @@ are reviewed by reading, and kept out of YB builds where a YB flow can reach the
   without the router lock.
 - Correction to 7c6f385c034's message: od_hba_reload runs on every reload; it is a no-op
   without an hba_file.
+- Step 6, inherited from upstream: od_reset fails when data is still queued for the
+  server (c910d21c845; no caller reaches it that way today, and the check has no NULL
+  guard on the relay iov); the replica catchup lookup runs on every relay wake-up
+  (c9f3fa48c14; finds nothing in YB); error counters are fixed arrays that abort above
+  key 100 (0a704db190; the largest YB key is 20); SIGPIPE is ignored instead of drained;
+  one "log reopened" line. Async logging (0d9fdf6aabf) is not new: YB has had it since
+  7185452143e.
+- Step 6 corrections: the merge message says the iov assert in od_frontend_attach is
+  live in YB; f4a1986aa69 guards it. The count parameter of od_backend_ready_wait was
+  removed by a7049a26d92.
+- Upstream issues seen in step 6 and left: mm_socket_read_pending always returns 0;
+  mm_io_read_pending dereferences on_read without a NULL check; ldap.c's retry loop uses
+  serv after freeing it; the logger queue drops lines silently when full.
 - Behaviour changes inherited from upstream: queued clients are served newest first
   (de02985941c); an error-level "client is waiting in routing queue" log (ed6c55436bc); an
   external client whose socket is reset before routing now fails routing
