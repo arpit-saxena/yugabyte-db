@@ -1368,10 +1368,12 @@ od_router_status_t od_router_attach(od_router_t *router,
 		return OD_ROUTER_ERROR;
 	}
 	od_id_generate(&server->id, "s");
+#ifndef YB_SUPPORT_FOUND
 	od_dbg_printf_on_dvl_lvl(1, "server %s%.*s has relay %p\n",
 				 server->id.id_prefix,
 				 (signed)sizeof(server->id.id), server->id.id,
 				 &server->relay);
+#endif // YB_SUPPORT_FOUND
 	/* YB */
 	server->global = client_for_router->global;
 	server->route = route;

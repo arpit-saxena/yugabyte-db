@@ -276,8 +276,10 @@ static inline od_frontend_status_t od_relay_on_packet(od_relay_t *relay,
 	case OD_WAIT_SYNC:
 		rc = machine_iov_add_pointer(relay->iov, data, size);
 
+#ifndef YB_SUPPORT_FOUND
 		od_dbg_printf_on_dvl_lvl(1, "relay %p advance msg %c\n", relay,
 					 *data);
+#endif // YB_SUPPORT_FOUND
 		if (rc == -1)
 			return OD_EOOM;
 		break;
@@ -369,7 +371,9 @@ od_relay_process(od_relay_t *relay, int *progress, char *data, int size)
 
 	rc = machine_iov_add_pointer(relay->iov, data, to_parse);
 
+#ifndef YB_SUPPORT_FOUND
 	od_dbg_printf_on_dvl_lvl(1, "relay %p advance msg %c\n", relay, *data);
+#endif // YB_SUPPORT_FOUND
 	if (rc == -1)
 		return OD_EOOM;
 
