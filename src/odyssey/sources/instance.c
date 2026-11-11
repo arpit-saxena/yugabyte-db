@@ -104,7 +104,6 @@ void od_config_testing(od_instance_t *instance)
 
 error:
 	od_router_free(&router);
-	return NOT_OK_RESPONSE;
 }
 
 static inline void od_bind_version()
