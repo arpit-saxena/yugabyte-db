@@ -2724,7 +2724,9 @@ static od_frontend_status_t od_frontend_remote(od_client_t *client)
 			break;
 
 		server = client->server;
+#ifndef YB_SUPPORT_FOUND
 		bool sync_req = 0;
+#endif // YB_SUPPORT_FOUND
 
 		/* attach */
 		status = od_relay_step(&client->relay, false);
@@ -2823,8 +2825,10 @@ static od_frontend_status_t od_frontend_remote(od_client_t *client)
 
 			/* retry read operation after attach */
 			continue;
+#ifndef YB_SUPPORT_FOUND
 		} else if (status == OD_REQ_SYNC) {
 			sync_req = 1;
+#endif // YB_SUPPORT_FOUND
 		/* YB */
 		} else if (status == OD_WAIT_SYNC) {
 			/*
@@ -2855,6 +2859,7 @@ static od_frontend_status_t od_frontend_remote(od_client_t *client)
 			break;
 		}
 
+#ifndef YB_SUPPORT_FOUND
 		// are we requested to meet sync point?
 
 		if (sync_req) {
@@ -2938,6 +2943,7 @@ static od_frontend_status_t od_frontend_remote(od_client_t *client)
 			}
 			machine_iov_add(server->relay.iov, pmsg);
 		}
+#endif // YB_SUPPORT_FOUND
 		if (status != OD_OK) {
 			break;
 		}
