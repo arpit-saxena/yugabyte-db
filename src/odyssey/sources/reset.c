@@ -62,7 +62,9 @@ int yb_od_server_cleanup_resources(od_server_t *server)
 	}
 	od_server_sync_request(server, 1);
 
-	rc = od_backend_ready_wait(server, "lru-cleanup", 1, yb_wait_timeout);
+	/* YB */
+	rc = od_backend_ready_wait(server, "lru-cleanup", 1, yb_wait_timeout,
+				   1 /*ignore server errors*/);
 	if (rc < 0) {
 		od_error(&instance->logger, "lru cleanup", NULL, server,
 			 "failed waiting for force-close responses");
@@ -103,8 +105,9 @@ int yb_send_reset_backend_default_query(od_server_t *server)
 	}
 
 	/* Wait for ReadyForQuery response */
+	/* YB */
 	rc = od_backend_ready_wait(server, "reset-guc-defaults", 1,
-				   yb_wait_timeout);
+				   yb_wait_timeout, 1 /*ignore server errors*/);
 	return rc;
 }
 
