@@ -113,7 +113,6 @@ MACHINE_API machine_msg_t *machine_channel_read_back(machine_channel_t *obj,
 	return (machine_msg_t *)msg;
 }
 
-/* YB */
 MACHINE_API size_t machine_channel_get_size(machine_channel_t *chan)
 {
 	mm_channeltype_t *type;

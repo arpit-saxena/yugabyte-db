@@ -162,7 +162,6 @@ MACHINE_API machine_msg_t *machine_channel_read(machine_channel_t *,
 MACHINE_API machine_msg_t *machine_channel_read_back(machine_channel_t *,
 						     uint32_t time_ms);
 
-/* YB */
 MACHINE_API size_t machine_channel_get_size(machine_channel_t *chan);
 
 /* tls */
@@ -337,7 +336,6 @@ machine_compression_choose_alg(char *client_compression_algorithms);
 MACHINE_API const char *machine_get_backtrace_string();
 MACHINE_API int machine_get_backtrace(void **entries, int max);
 
-/* YB */
 /* wait list */
 MACHINE_API machine_wait_list_t *machine_wait_list_create();
 MACHINE_API void machine_wait_list_destroy(machine_wait_list_t *wait_list);
