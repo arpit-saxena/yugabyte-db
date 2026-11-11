@@ -139,9 +139,9 @@ struct od_rule {
 	untyped_kiwi_var_t *backend_startup_vars;
 	size_t backend_startup_vars_sz;
 
+	od_list_t link;
 	/* YB */
 	int min_pool_size;
-	od_list_t link;
 	int yb_jitter_time;
 };
 
