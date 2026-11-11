@@ -243,6 +243,7 @@ int od_reset(od_server_t *server)
 		break;
 	}
 
+#ifndef YB_SUPPORT_FOUND
 	/* Request one more sync point here.
 	* In `od_server_synchronized` we
 	* count number of sync/query msg send to connection
@@ -256,6 +257,7 @@ int od_reset(od_server_t *server)
 	if (od_backend_request_sync_point(server) == NOT_OK_RESPONSE) {
 		goto error;
 	}
+#endif // YB_SUPPORT_FOUND
 
 	od_debug(&instance->logger, "reset", server->client, server,
 		 "synchronized");
