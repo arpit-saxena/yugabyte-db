@@ -77,10 +77,19 @@ int mm_socket_set_keepalive(int fd, int enable, int delay, int interval,
 	return MM_OK_RETCODE;
 }
 
+int mm_socket_advice_keepalive_usr_timeout(int delay, int interval,
+					   int keep_count)
+{
+	// https://habr.com/ru/articles/700470/
+	// delay, interval are in seconds
+	// usr timeout in milliseconds
+	// see man 7 tcp
+	return 1000 * (delay + interval * keep_count) - 500;
+}
+
 int mm_socket_set_nosigpipe(int fd, int enable)
 {
 #if defined(SO_NOSIGPIPE)
-	int enable = 1;
 	rc = setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &enable, sizeof(enable));
 	if (rc == -1)
 		return -1;
@@ -203,6 +212,17 @@ int mm_socket_read(int fd, void *buf, int size)
 	int rc;
 	rc = read(fd, buf, size);
 	return rc;
+}
+
+int mm_socket_read_pending(int fd)
+{
+	int rc;
+	rc = ioctl(fd, FIONREAD, &rc);
+	if (rc == -1) {
+		return -1;
+	}
+
+	return rc > 0;
 }
 
 int mm_socket_getsockname(int fd, struct sockaddr *sa, socklen_t *salen)

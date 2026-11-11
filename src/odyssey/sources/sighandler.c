@@ -135,7 +135,7 @@ od_attribute_noreturn() void od_system_shutdown(od_system_t *system,
 #ifdef OD_SYSTEM_SHUTDOWN_CLEANUP
 	od_router_free(system->global->router);
 
-	od_extention_free(&instance->logger, system->global->extentions);
+	od_extension_free(&instance->logger, system->global->extensions);
 
 	od_system_cleanup(system);
 
@@ -170,7 +170,7 @@ void od_system_signal_handler(void *arg)
 
 	sigset_t ignore_mask;
 	sigemptyset(&ignore_mask);
-	sigaddset(&mask, SIGPIPE);
+	sigaddset(&ignore_mask, SIGPIPE);
 	int rc;
 	rc = machine_signal_init(&mask, &ignore_mask);
 	if (rc == -1) {
@@ -202,8 +202,12 @@ void od_system_signal_handler(void *arg)
 					od_error(
 						&instance->logger, "system",
 						NULL, NULL,
+						/* YB */
 						"failed to reopen log file in the dir '%s'",
 						instance->config.log_dir);
+				} else {
+					od_log(&instance->logger, "system",
+					       NULL, NULL, "log reopened");
 				}
 			}
 			break;

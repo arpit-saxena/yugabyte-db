@@ -19,8 +19,8 @@ void od_watchdog_worker(void *arg)
 			"failed to create ctrl lock file in %s (errno: %d) try to "
 			"specify another locks dir or disable online restart feature",
 			instance->config.locks_dir == NULL ?
-				      ODYSSEY_DEFAULT_LOCK_DIR :
-				      instance->config.locks_dir,
+				ODYSSEY_DEFAULT_LOCK_DIR :
+				instance->config.locks_dir,
 			errno);
 
 		if (instance->config.graceful_die_on_errors) {
@@ -36,8 +36,8 @@ void od_watchdog_worker(void *arg)
 		       "failed to create exec lock file in %s (errno: %d) try to "
 		       "specify another locks dir or disable online restart feature",
 		       instance->config.locks_dir == NULL ?
-				     ODYSSEY_DEFAULT_LOCK_DIR :
-				     instance->config.locks_dir,
+			       ODYSSEY_DEFAULT_LOCK_DIR :
+			       instance->config.locks_dir,
 		       errno);
 		if (instance->config.graceful_die_on_errors) {
 			kill(instance->pid.pid, OD_SIG_GRACEFUL_SHUTDOWN);
@@ -49,7 +49,7 @@ void od_watchdog_worker(void *arg)
 	}
 
 	od_dbg_printf_on_dvl_lvl(1, "try to acquire ctrl lock %d\n", fd_ctrl);
-	while (1) {
+	for (;;) {
 		if (flock(fd_ctrl, LOCK_EX | LOCK_NB) == 0) {
 			od_dbg_printf_on_dvl_lvl(1, "acquire ctrl lock ok %d\n",
 						 fd_ctrl);
@@ -59,7 +59,7 @@ void od_watchdog_worker(void *arg)
 	}
 
 	od_dbg_printf_on_dvl_lvl(1, "try to acquire exec lock %d\n", fd_exec);
-	while (1) {
+	for (;;) {
 		if (flock(fd_exec, LOCK_EX | LOCK_NB) == 0) {
 			od_dbg_printf_on_dvl_lvl(1, "acquire exec lock ok %d\n",
 						 fd_exec);
@@ -69,7 +69,7 @@ void od_watchdog_worker(void *arg)
 	}
 
 	flock(fd_ctrl, LOCK_UN | LOCK_NB);
-	while (1) {
+	for (;;) {
 		if (flock(fd_ctrl, LOCK_EX | LOCK_NB) == -1) {
 			od_dbg_printf_on_dvl_lvl(1, "release exec lock %d\n",
 						 fd_exec);

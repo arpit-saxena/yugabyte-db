@@ -29,13 +29,19 @@ static void mm_context_runner(void)
 	abort();
 }
 
+static inline void write_func_ptr(void **dst, void (*func)(void))
+{
+	memcpy(dst, &func, sizeof(func));
+}
+
 static inline void **mm_context_prepare(mm_contextstack_t *stack)
 {
 	void **sp;
 	sp = (void **)(stack->pointer + stack->size);
 #if __amd64
 	*--sp = NULL;
-	*--sp = (void *)mm_context_runner;
+	// eq to *--sp = (void *)mm_context_runner
+	write_func_ptr(--sp, mm_context_runner);
 	/* for x86_64 we need to place return address on stack */
 	sp -= 6;
 	memset(sp, 0, sizeof(void *) * 6);
@@ -80,7 +86,7 @@ asm(
 #if __amd64
 	"\t.text\n"
 	"\t.globl mm_context_swap\n"
-	"\t.type x,@function\n"
+	"\t.type mm_context_swap, @function\n"
 	"mm_context_swap:\n"
 	"\tpushq %rbp\n"
 	"\tpushq %rbx\n"
@@ -100,7 +106,7 @@ asm(
 #elif __i386
 	"\t.text\n"
 	"\t.globl mm_context_swap\n"
-	"\t.type x,@function\n"
+	"\t.type mm_context_swap, @function\n"
 	"mm_context_swap:\n"
 	"\tpushl %ebp\n"
 	"\tpushl %ebx\n"

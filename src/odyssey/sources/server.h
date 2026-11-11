@@ -207,7 +207,7 @@ static inline void od_server_init(od_server_t *server, int reserve_prep_stmts)
 
 static inline od_server_t *od_server_allocate(int reserve_prep_stmts)
 {
-	od_server_t *server = malloc(sizeof(*server));
+	od_server_t *server = malloc(sizeof(od_server_t));
 	if (server == NULL)
 		return NULL;
 	od_server_init(server, reserve_prep_stmts);
@@ -286,7 +286,7 @@ static inline int od_server_grac_shutdown(od_server_t *server)
 
 static inline int od_server_reload(od_attribute_unused() od_server_t *server)
 {
-	// TODO: set offline to 1 if storage/auth rules chaged
+	// TODO: set offline to 1 if storage/auth rules changed
 	return 0;
 }
 

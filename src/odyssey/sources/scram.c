@@ -644,7 +644,7 @@ int od_scram_read_client_final_message(machine_io_t *io,
 		/* Fetch hash data of server's SSL certificate */
 		scram_rc = machine_tls_cert_hash(
 			io, &cbind_data,
-			(uint32_t *)&cbind_data_len); // TODO: maybe rework of machinarium beacuse it's strange that we use size_t here and uint32_t in machinarium
+			(uint32_t *)&cbind_data_len); // TODO: maybe rework of machinarium because it's strange that we use size_t here and uint32_t in machinarium
 
 		/* should not happen */
 		if (scram_rc != OK_RESPONSE) {
@@ -878,6 +878,13 @@ od_scram_create_server_final_message(od_scram_state_t *scram_state)
 	 */
 	if (result == NULL || size > INT_MAX - 1)
 		goto error;
+
+	// There is compiler warning about some wierd case
+	// when snprintf result is above INT_MAX
+	// (we dont check snprintf result, see -Wformat-truncation)
+	if (od_unlikely(size + 1 >= INT_MAX)) {
+		abort();
+	}
 
 	snprintf(result, size + 1, "v=%s", signature);
 

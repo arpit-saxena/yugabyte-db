@@ -228,6 +228,9 @@ MACHINE_API int machine_set_keepalive(machine_io_t *, int enable, int delay,
 				      int interval, int probes,
 				      int usr_timeout);
 
+MACHINE_API int machine_advice_keepalive_usr_timeout(int delay, int interval,
+						     int probes);
+
 MACHINE_API int machine_set_tls(machine_io_t *, machine_tls_t *, uint32_t);
 MACHINE_API int machine_set_compression(machine_io_t *, char algorithm);
 
@@ -293,6 +296,11 @@ MACHINE_API int machine_read_stop(machine_io_t *);
 
 MACHINE_API ssize_t machine_read_raw(machine_io_t *, void *, size_t);
 
+/*
+ * Returns 1 if there are some bytes in io, that are ready to be read.
+ */
+MACHINE_API int machine_read_pending(machine_io_t *);
+
 MACHINE_API machine_msg_t *machine_read(machine_io_t *, size_t,
 					uint32_t time_ms);
 
@@ -322,6 +330,14 @@ MACHINE_API ssize_t machine_tls_cert_hash(
 MACHINE_API char
 machine_compression_choose_alg(char *client_compression_algorithms);
 
+/* debug tools */
+
+// note: backtrace functions are currently slow
+// if you want bt collection to be fast, impl should be rewritten
+MACHINE_API const char *machine_get_backtrace_string();
+MACHINE_API int machine_get_backtrace(void **entries, int max);
+
+/* YB */
 /* wait list */
 MACHINE_API machine_wait_list_t *machine_wait_list_create();
 MACHINE_API void machine_wait_list_destroy(machine_wait_list_t *wait_list);

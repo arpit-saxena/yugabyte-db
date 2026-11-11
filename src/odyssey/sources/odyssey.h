@@ -100,7 +100,7 @@
 
 /* modules */
 #include "sources/module.h"
-#include "sources/extention.h"
+#include "sources/extension.h"
 
 #include "sources/hba_reader.h"
 #include "sources/config_reader.h"
@@ -155,6 +155,7 @@
 
 #include "sources/frontend.h"
 #include "sources/backend.h"
+#include "sources/backend_sync.h"
 
 #include "sources/mdb_iamproxy.h"
 

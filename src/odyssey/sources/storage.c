@@ -62,8 +62,8 @@ int od_storage_watchdog_free(od_storage_watchdog_t *watchdog)
 od_rule_storage_t *od_rules_storage_allocate(void)
 {
 	/* Allocate and force defaults */
-	od_rule_storage_t *storage;
-	storage = (od_rule_storage_t *)malloc(sizeof(*storage));
+	od_rule_storage_t *storage =
+		(od_rule_storage_t *)malloc(sizeof(od_rule_storage_t));
 	if (storage == NULL)
 		return NULL;
 	memset(storage, 0, sizeof(*storage));
@@ -252,7 +252,7 @@ void od_storage_watchdog_watch(void *arg)
 	/* create internal auth client */
 	od_client_t *watchdog_client;
 	watchdog_client =
-		od_client_allocate_internal(global, "storage-watchog");
+		od_client_allocate_internal(global, "storage-watchdog");
 	if (watchdog_client == NULL) {
 		od_error(&instance->logger, "watchdog", NULL, NULL,
 			 "route storage watchdog failed to allocate client");

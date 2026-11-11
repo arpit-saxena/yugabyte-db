@@ -36,6 +36,7 @@ static od_keyword_t od_hba_keywords[] = {
 	od_keyword("trust", OD_LALLOW),
 	od_keyword("deny", OD_LDENY),
 	od_keyword("reject", OD_LDENY),
+	{ 0, 0, 0 },
 };
 
 static void od_hba_reader_error(od_config_reader_t *reader, char *msg)
@@ -182,7 +183,7 @@ static int od_hba_reader_name(od_config_reader_t *reader,
 	int rc;
 	void *value = NULL;
 	od_token_t token;
-	while (1) {
+	for (;;) {
 		rc = od_hba_reader_value(reader, &value);
 		switch (rc) {
 		case OD_PARSER_STRING: {

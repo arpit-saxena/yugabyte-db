@@ -30,7 +30,8 @@ static inline int od_auth_frontend_cleartext(od_client_t *client)
 	}
 
 	/* wait for password response */
-	while (1) {
+	for (;;) {
+		/* YB */
 		msg = yb_od_read_auth(&client->io, UINT32_MAX);
 		if (msg == NULL) {
 			od_error(&instance->logger, "auth", client, NULL,
@@ -67,7 +68,7 @@ static inline int od_auth_frontend_cleartext(od_client_t *client)
 			 "saved user password to perform backend auth");
 	}
 
-	od_extention_t *extentions = client->global->extentions;
+	od_extension_t *extensions = client->global->extensions;
 
 	/* support mdb_iamproxy authentication */
 	if (client->rule->enable_mdb_iamproxy_auth) {
@@ -77,7 +78,7 @@ static inline int od_auth_frontend_cleartext(od_client_t *client)
 		kiwi_password_free(&client_token);
 		machine_msg_free(msg);
 		if (authentication_result != OK_RESPONSE) {
-			goto auth_failed; // refence at line 80, 100 and etc
+			goto auth_failed; // reference at line 80, 100 and etc
 		}
 		return OK_RESPONSE;
 	}
@@ -98,7 +99,7 @@ static inline int od_auth_frontend_cleartext(od_client_t *client)
 	}
 #endif
 	if (client->rule->auth_module) {
-		od_module_t *modules = extentions->modules;
+		od_module_t *modules = extensions->modules;
 
 		/* auth callback */
 		od_module_t *module;
@@ -213,7 +214,8 @@ static inline int od_auth_frontend_md5(od_client_t *client)
 	}
 
 	/* wait for password response */
-	while (1) {
+	for (;;) {
+		/* YB */
 		msg = yb_od_read_auth(&client->io, UINT32_MAX);
 		if (msg == NULL) {
 			od_error(&instance->logger, "auth", client, NULL,
@@ -372,7 +374,8 @@ static inline int od_auth_frontend_scram_sha_256(od_client_t *client)
 	}
 
 	/* wait for SASLInitialResponse */
-	while (1) {
+	for (;;) {
+		/* YB */
 		msg = yb_od_read_auth(&client->io, UINT32_MAX);
 		if (msg == NULL) {
 			od_error(&instance->logger, "auth", client, NULL,
@@ -524,7 +527,7 @@ static inline int od_auth_frontend_scram_sha_256(od_client_t *client)
 	}
 
 	/* wait for SASLResponse */
-	while (1) {
+	for (;;) {
 		// TODO: here's infinite wait, need to replace it with
 		// client_login_timeout
 		msg = yb_od_read_auth(&client->io, UINT32_MAX);
@@ -674,9 +677,9 @@ static inline int od_auth_frontend_block(od_client_t *client)
 		client, KIWI_INVALID_AUTHORIZATION_SPECIFICATION,
 		"user blocked: %s %s",
 		client->rule->db_is_default ? "(unknown database)" :
-						    client->startup.database.value,
+					      client->startup.database.value,
 		client->rule->user_is_default ? "(unknown user)" :
-						      client->startup.user.value);
+						client->startup.user.value);
 	return 0;
 }
 #endif
@@ -977,15 +980,15 @@ static inline int od_auth_backend_sasl_continue(od_server_t *server,
 	/* use storage or user password */
 	char *password;
 
-	if (client != NULL && client->password.password != NULL) {
+	if (route->rule->storage_password) {
+		password = route->rule->storage_password;
+	} else if (client != NULL && client->password.password != NULL) {
 		od_error(
 			&instance->logger, "auth", NULL, server,
 			"cannot authenticate with SCRAM secret from auth_query (db %s, user %s)",
 			route->rule->db_name, route->rule->user_name);
 
 		return -1;
-	} else if (route->rule->storage_password) {
-		password = route->rule->storage_password;
 	} else if (route->rule->password) {
 		password = route->rule->password;
 	} else if (client->received_password.password) {
@@ -1177,7 +1180,7 @@ int od_auth_backend(od_server_t *server, machine_msg_t *msg,
 	}
 
 	od_debug(&instance->logger, "auth", NULL, server,
-		 "recieved msg type %u", auth_type);
+		 "received msg type %u", auth_type);
 
 	/* YB */
 	/* handle communication for the auth backend separately. */
@@ -1300,7 +1303,7 @@ int od_auth_backend(od_server_t *server, machine_msg_t *msg,
 	}
 
 	/* wait for authentication response */
-	while (1) {
+	for (;;) {
 		msg = od_read(&server->io, UINT32_MAX);
 		if (msg == NULL) {
 			od_error(&instance->logger, "auth", NULL, server,

@@ -10,7 +10,7 @@
 extern od_keyword_t yb_od_alter_guc_adoption_strategy_keywords[];
 
 extern int od_config_reader_import(od_config_t *, od_rules_t *, od_error_t *,
-				   od_extention_t *, od_global_t *,
+				   od_extension_t *, od_global_t *,
 				   od_hba_rules_t *, char *);
 
 extern void yb_read_conf_from_env_var(od_rules_t *, od_config_t *,

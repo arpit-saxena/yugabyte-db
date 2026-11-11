@@ -404,6 +404,12 @@ MACHINE_API int machine_set_keepalive(machine_io_t *obj, int enable, int delay,
 	return 0;
 }
 
+MACHINE_API int machine_advice_keepalive_usr_timeout(int delay, int interval,
+						     int probes)
+{
+	return mm_socket_advice_keepalive_usr_timeout(delay, interval, probes);
+}
+
 MACHINE_API int machine_io_attach(machine_io_t *obj)
 {
 	mm_io_t *io = mm_cast(mm_io_t *, obj);
@@ -580,6 +586,21 @@ ssize_t mm_io_read(mm_io_t *io, void *buf, size_t size)
 	return rc;
 }
 
+int mm_io_read_pending(mm_io_t *io)
+{
+	mm_cond_t *on_read = (mm_cond_t *)io->on_read;
+	if (on_read->signal) {
+		return 1;
+	}
+
+	if (mm_tls_is_active(io)) {
+		return mm_tls_read_pending(io);
+	}
+
+	return mm_socket_read_pending(io->fd);
+}
+
+/* YB */
 MACHINE_API int yb_machine_io_is_socket_closed(machine_io_t *obj)
 {
 	mm_io_t *io = mm_cast(mm_io_t *, obj);
@@ -603,6 +624,7 @@ MACHINE_API int yb_machine_io_is_socket_closed(machine_io_t *obj)
 	return 0;
 }
 
+/* YB */
 MACHINE_API int machine_io_poll(machine_io_t *obj)
 {
 	/* no need to check IN/OUT - we call read/write before awaiting anyway */

@@ -40,6 +40,7 @@ set(od_test_src
     machinarium/test_connect_cancel1.c
     machinarium/test_accept_timeout.c
     machinarium/test_accept_cancel.c
+    machinarium/test_advice_keepalive_usr_timeout.c
     machinarium/test_wait_list_without_notify.c
     machinarium/test_wait_list_notify_after_wait.c
     machinarium/test_wait_list_one_producer_multiple_consumers.c
@@ -51,6 +52,7 @@ set(od_test_src
     machinarium/test_client_server1.c
     machinarium/test_client_server2.c
     machinarium/test_client_server_unix_socket.c
+    machinarium/test_client_server_unix_socket_no_msg.c
     machinarium/test_read_10mb0.c
     machinarium/test_read_10mb1.c
     machinarium/test_read_10mb2.c
@@ -59,6 +61,7 @@ set(od_test_src
     machinarium/test_read_var.c
     machinarium/test_tls0.c
     machinarium/test_tls_unix_socket.c
+    machinarium/test_tls_unix_socket_no_msg.c
     machinarium/test_tls_read_10mb0.c
     machinarium/test_tls_read_10mb1.c
     machinarium/test_tls_read_10mb2.c

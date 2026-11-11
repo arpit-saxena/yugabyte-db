@@ -333,6 +333,8 @@ static inline void od_system_server(void *arg)
 				instance->config.keepalive_probes,
 				instance->config.keepalive_usr_timeout);
 
+#ifdef YB_SUPPORT_FOUND
+		/* YB: Keep the client notify io, upstream removed it */
 		machine_io_t *notify_io;
 		notify_io = machine_io_create();
 		if (notify_io == NULL) {
@@ -355,13 +357,16 @@ static inline void od_system_server(void *arg)
 			continue;
 		}
 
+#endif // YB_SUPPORT_FOUND
 		/* allocate new client */
 		od_client_t *client = od_client_allocate();
 		if (client == NULL) {
 			od_error(&instance->logger, "server", NULL, NULL,
 				 "failed to allocate client object");
+#ifdef YB_SUPPORT_FOUND
 			machine_close(notify_io);
 			machine_io_free(notify_io);
+#endif // YB_SUPPORT_FOUND
 			machine_close(client_io);
 			machine_io_free(client_io);
 			continue;
@@ -379,8 +384,10 @@ static inline void od_system_server(void *arg)
 		if (rc == -1) {
 			od_error(&instance->logger, "server", NULL, NULL,
 				 "failed to allocate client io object");
+#ifdef YB_SUPPORT_FOUND
 			machine_close(notify_io);
 			machine_io_free(notify_io);
+#endif // YB_SUPPORT_FOUND
 			machine_close(client_io);
 			machine_io_free(client_io);
 			od_client_free(client);
@@ -390,7 +397,9 @@ static inline void od_system_server(void *arg)
 		client->config_listen = server->config;
 		client->tls = server->tls;
 		client->time_accept = 0;
+#ifdef YB_SUPPORT_FOUND
 		client->notify_io = notify_io;
+#endif // YB_SUPPORT_FOUND
 		client->time_accept = machine_time_us();
 
 		/* create new client event and pass it to worker pool */
@@ -689,7 +698,7 @@ void od_system_config_reload(od_system_t *system)
 {
 	od_instance_t *instance = system->global->instance;
 	od_router_t *router = system->global->router;
-	od_extention_t *extentions = system->global->extentions;
+	od_extension_t *extensions = system->global->extensions;
 	od_hba_t *hba = system->global->hba;
 	od_list_t *i;
 
@@ -713,7 +722,7 @@ void od_system_config_reload(od_system_t *system)
 	od_hba_rules_init(&hba_rules);
 
 	int rc;
-	rc = od_config_reader_import(&config, &rules, &error, extentions,
+	rc = od_config_reader_import(&config, &rules, &error, extensions,
 				     system->global, &hba_rules,
 				     instance->config_file);
 	if (rc == -1) {
@@ -787,16 +796,16 @@ void od_system_config_reload(od_system_t *system)
 			od_log(&instance->logger, "reload-config", NULL, NULL,
 			       "failed to match listen config for %s:%d",
 			       server->config->host == NULL ?
-					     "(NULL)" :
-					     server->config->host,
+				       "(NULL)" :
+				       server->config->host,
 			       server->config->port);
 		} else if (server->config->tls_opts->tls_mode !=
 			   listen_config->tls_opts->tls_mode) {
 			od_log(&instance->logger, "reload-config", NULL, NULL,
 			       "reloaded tls mode for %s:%d",
 			       server->config->host == NULL ?
-					     "(NULL)" :
-					     server->config->host,
+				       "(NULL)" :
+				       server->config->host,
 			       server->config->port);
 
 			server->config->tls_opts->tls_mode =
@@ -806,7 +815,7 @@ void od_system_config_reload(od_system_t *system)
 		if (server->config->tls_opts->tls_mode !=
 		    OD_CONFIG_TLS_DISABLE) {
 			machine_tls_t *tls = od_tls_frontend(server->config);
-			/* TODO: suppport changing cert files */
+			/* TODO: support changing cert files */
 			if (tls != NULL) {
 				server->tls = tls;
 			}
@@ -838,6 +847,8 @@ void od_system_config_reload(od_system_t *system)
 
 	od_log(&instance->logger, "rules", NULL, NULL,
 	       "%d routes created/deleted and scheduled for removal", updates);
+
+	od_rules_groups_checkers_run(&instance->logger, &router->rules);
 }
 
 static inline void od_system(void *arg)

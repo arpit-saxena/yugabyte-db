@@ -24,7 +24,13 @@ static inline void od_frontend_close(od_client_t *client)
 	od_router_t *router = client->global->router;
 	od_atomic_u32_dec(&router->clients);
 
+	/* YB: Keep the client notify io, upstream removed it */
+#ifndef YB_SUPPORT_FOUND
+	od_io_close(&client->io);
+	od_client_free(client);
+#else // YB_SUPPORT_FOUND
 	od_client_free_extended(client);
+#endif // YB_SUPPORT_FOUND
 }
 
 int od_frontend_info(od_client_t *client, char *fmt, ...)
@@ -336,6 +342,10 @@ od_frontend_attach(od_client_t *client, char *context,
 	od_router_t *router = client->global->router;
 	od_route_t *route = client->route;
 
+	if (route->rule->pool->reserve_prepared_statement) {
+		client->relay.require_full_prep_stmt = 1;
+	}
+
 	bool wait_for_idle = false;
 	for (;;) {
 		od_router_status_t status;
@@ -381,6 +391,8 @@ od_frontend_attach(od_client_t *client, char *context,
 #ifndef YB_SUPPORT_FOUND
 		assert(od_server_synchronized(server));
 #endif // YB_SUPPORT_FOUND
+		assert(server->relay.iov == 0 ||
+		       !machine_iov_pending(server->relay.iov));
 
 		/* connect to server, if necessary */
 		if (server->io.io) {
@@ -540,8 +552,14 @@ static inline od_frontend_status_t od_frontend_local_setup(od_client_t *client)
 		goto error;
 	/* client parameters */
 	machine_msg_t *msg;
-	msg = kiwi_be_write_parameter_status(stream, "server_version", 15,
-					     "9.6.0", 6);
+	char data[128];
+	int data_len;
+	/* current version and build */
+	data_len =
+		od_snprintf(data, sizeof(data), "%s-%s-%s", OD_VERSION_NUMBER,
+			    OD_VERSION_GIT, OD_VERSION_BUILD);
+	msg = kiwi_be_write_parameter_status(stream, "server_version", 15, data,
+					     data_len + 1);
 	if (msg == NULL)
 		goto error;
 	msg = kiwi_be_write_parameter_status(stream, "server_encoding", 16,
@@ -710,7 +728,7 @@ static inline bool od_should_drop_connection(od_client_t *client,
 		if (server->state ==
 			    OD_SERVER_ACTIVE /* we can drop client that are just connected and do not perform any queries */
 		    && !od_server_synchronized(server)) {
-			/* most probably we are not in transcation, but still executing some stmt */
+			/* most probably we are not in transaction, but still executing some stmt */
 			return false;
 		}
 		if (od_unlikely(!server->is_transaction)) {
@@ -725,12 +743,19 @@ static inline bool od_should_drop_connection(od_client_t *client,
 }
 static od_frontend_status_t od_frontend_ctl(od_client_t *client)
 {
+#ifndef YB_SUPPORT_FOUND
+	if (od_atomic_u64_of(&client->killed) == 1) {
+		return OD_STOP;
+	}
+
+#else // YB_SUPPORT_FOUND
 	uint32_t op = od_client_ctl_of(client);
 	if (op & OD_CLIENT_OP_KILL) {
 		od_client_ctl_unset(client, OD_CLIENT_OP_KILL);
 		od_client_notify_read(client);
 		return OD_STOP;
 	}
+#endif // YB_SUPPORT_FOUND
 	return OD_OK;
 }
 
@@ -741,7 +766,7 @@ static od_frontend_status_t od_frontend_local(od_client_t *client)
 	for (;;) {
 		machine_msg_t *msg = NULL;
 		for (;;) {
-			/* local server is alwys null */
+			/* local server is always null */
 			if (od_should_drop_connection(client, NULL)) {
 				/* Odyssey is in a state of completion, we done
                          * the last client's request and now we can drop the connection  */
@@ -1428,9 +1453,9 @@ static inline machine_msg_t *od_frontend_rewrite_msg(char *data, int size,
 
 #ifndef YB_SUPPORT_FOUND
 static od_frontend_status_t od_frontend_deploy_prepared_stmt(
-	od_server_t *server, od_relay_t *relay, char *ctx, char *data,
-	int size /* to adcance or to write? */, od_hash_t body_hash,
-	char *opname, int opnamelen)
+	od_server_t *server, __attribute__((unused)) od_relay_t *relay,
+	char *ctx, char *data, int size /* to adcance or to write? */,
+	od_hash_t body_hash, char *opname, int opnamelen)
 {
 	od_route_t *route = server->route;
 	od_instance_t *instance = server->global->instance;
@@ -1493,19 +1518,23 @@ static od_frontend_status_t od_frontend_deploy_prepared_stmt(
 	}
 }
 
-static inline od_frontend_status_t od_frontend_deploy_prepared_stmt_msg(
-	od_server_t *server, od_relay_t *relay, char *ctx,
-	machine_msg_t *msg /* to adcance or to write? */
-)
+static inline od_frontend_status_t
+od_frontend_deploy_prepared_stmt_msg(od_server_t *server, od_relay_t *relay,
+				     char *ctx)
 {
-	char *data = machine_msg_data(msg);
-	int size = machine_msg_size(msg);
+	od_frontend_status_t rc;
+	char *data = machine_msg_data(server->parse_msg);
+	int size = machine_msg_size(server->parse_msg);
 
 	od_hash_t body_hash = od_murmur_hash(data, size);
 	char opname[OD_HASH_LEN];
 	od_snprintf(opname, OD_HASH_LEN, "%08x", body_hash);
-	return od_frontend_deploy_prepared_stmt(server, relay, ctx, data, size,
-						body_hash, opname, OD_HASH_LEN);
+	rc = od_frontend_deploy_prepared_stmt(server, relay, ctx, data, size,
+					      body_hash, opname, OD_HASH_LEN);
+
+	machine_msg_free(server->parse_msg);
+	server->parse_msg = NULL;
+	return rc;
 }
 #endif // YB_SUPPORT_FOUND
 
@@ -1601,9 +1630,6 @@ static od_frontend_status_t od_frontend_remote_client(od_relay_t *relay,
 			 "%s", kiwi_fe_type_to_string(type));
 
 	od_frontend_status_t retstatus = OD_OK;
-#ifndef YB_SUPPORT_FOUND
-	bool forwarded = 0;
-#endif // YB_SUPPORT_FOUND
 	/*
 	 * YB: This will be set to false if the packet produces a
 	 * ReadyForQuery response
@@ -1737,7 +1763,6 @@ static od_frontend_status_t od_frontend_remote_client(od_relay_t *relay,
 			od_dbg_printf_on_dvl_lvl(
 				1, "client relay %p advance msg %c\n", relay,
 				*(char *)machine_msg_data(msg));
-			forwarded = 1;
 #else // YB_SUPPORT_FOUND
 			/* YB: unnamed prepared statement, check if re-parse needed */
 			if (operator_name[0] == '\0') {
@@ -1979,7 +2004,7 @@ static od_frontend_status_t od_frontend_remote_client(od_relay_t *relay,
 					    value_ptr->len) != 0) {
 					/*
 					* Raise error:
-					* client allocated prepared stmt with same name 
+					* client allocated prepared stmt with same name
 					*/
 					return OD_ESERVER_WRITE;
 				}
@@ -2140,6 +2165,19 @@ static od_frontend_status_t od_frontend_remote_client(od_relay_t *relay,
 
 			od_hash_t body_hash =
 				od_murmur_hash(desc->data, desc->len);
+
+			int invalidate = 0;
+
+			if (desc->len >= 7) {
+				if (strncmp(desc->data, "DISCARD", 7) == 0) {
+					od_debug(
+						&instance->logger,
+						"rewrite bind", client, server,
+						"discard detected, invalidate caches");
+					invalidate = 1;
+				}
+			}
+
 			char opname[OD_HASH_LEN];
 			od_snprintf(opname, OD_HASH_LEN, "%08x", body_hash);
 
@@ -2158,6 +2196,10 @@ static od_frontend_status_t od_frontend_remote_client(od_relay_t *relay,
 			}
 
 			machine_msg_t *msg;
+			if (invalidate) {
+				od_hashmap_empty(server->prep_stmts);
+			}
+
 			msg = od_frontend_rewrite_msg(data, size,
 						      opname_start_offset,
 						      operator_name_len, opname,
@@ -2180,7 +2222,6 @@ static od_frontend_status_t od_frontend_remote_client(od_relay_t *relay,
 			od_dbg_printf_on_dvl_lvl(
 				1, "client relay %p advance msg %c\n", relay,
 				*(char *)machine_msg_data(msg));
-			forwarded = 1;
 #else // YB_SUPPORT_FOUND
 			/* YB: unnamed prepared statement, check if re-parse needed */
 			if (operator_name[0] == '\0') {
@@ -2497,7 +2538,7 @@ static void od_frontend_remote_client_on_read(od_relay_t *relay, int size)
 	od_stat_recv_client(stats, size);
 }
 
-/* 
+/*
 * machine_sleep with ODYSSEY_CATCHUP_RECHECK_INTERVAL value
 * will be effitiently just a context switch.
 */
@@ -2521,7 +2562,9 @@ static inline od_frontend_status_t od_frontend_poll_catchup(od_client_t *client,
 	int absent_heartbeat_checks = 0;
 	while (route->last_heartbeat == 0) {
 		machine_sleep(ODYSSEY_CATCHUP_RECHECK_INTERVAL);
-		if ((int64_t)absent_heartbeat_checks++ > // add cast to int64_t for correct camparison (int64_t > int and ibt64_t > uint32_t)
+		/* add cast to int64_t for correct camparison 
+  			(int64_t > int and int64_t > uint32_t) */
+		if ((int64_t)absent_heartbeat_checks++ >
 		    (timeout * (int64_t)1000 /
 		     ODYSSEY_CATCHUP_RECHECK_INTERVAL)) {
 			od_debug(&instance->logger, "catchup", client, NULL,
@@ -2630,8 +2673,8 @@ od_frontend_check_replica_catchup(od_instance_t *instance, od_client_t *client)
 	}
 
 	if (catchup_timeout) {
-		od_log(&instance->logger, "catchup", client, NULL,
-		       "checking for lag before doing any actual work");
+		od_debug(&instance->logger, "catchup", client, NULL,
+			 "checking for lag before doing any actual work");
 		status = od_frontend_poll_catchup(client, route,
 						  catchup_timeout);
 	}
@@ -2650,12 +2693,14 @@ static od_frontend_status_t od_frontend_remote(od_client_t *client)
 
 	od_frontend_status_t status;
 
+#ifdef YB_SUPPORT_FOUND
 	/* enable client notification mechanism */
 	int rc;
 	rc = machine_read_start(client->notify_io, client->cond);
 	if (rc == -1) {
 		return OD_ECLIENT_READ;
 	}
+#endif // YB_SUPPORT_FOUND
 	bool reserve_session_server_connection =
 		route->rule->reserve_session_server_connection;
 
@@ -2725,6 +2770,14 @@ static od_frontend_status_t od_frontend_remote(od_client_t *client)
 		if (status != OD_OK)
 			break;
 
+		/* Check for replication lag and reject query if too big */
+		od_frontend_status_t catchup_status =
+			od_frontend_check_replica_catchup(instance, client);
+		if (od_frontend_status_is_err(catchup_status)) {
+			status = catchup_status;
+			break;
+		}
+
 		server = client->server;
 #ifndef YB_SUPPORT_FOUND
 		bool sync_req = 0;
@@ -2733,15 +2786,6 @@ static od_frontend_status_t od_frontend_remote(od_client_t *client)
 		/* attach */
 		status = od_relay_step(&client->relay, false);
 		if (status == OD_ATTACH) {
-			/* Check for replication lag and reject query if too big */
-			od_frontend_status_t catchup_status =
-				od_frontend_check_replica_catchup(instance,
-								  client);
-			if (od_frontend_status_is_err(catchup_status)) {
-				status = catchup_status;
-				break;
-			}
-
 			assert(server == NULL);
 
 		yb_retry_attach:
@@ -2869,12 +2913,11 @@ static od_frontend_status_t od_frontend_remote(od_client_t *client)
 				 server, "process, %d",
 				 od_server_synchronized(server));
 
-			while (1) {
+			for (;;) {
 				if (od_server_synchronized(server)) {
 					break;
 				}
 				// await here
-
 				od_debug(&instance->logger, "sync-point-await",
 					 client, server, "process await");
 				status = od_frontend_remote_process_server(
@@ -2897,12 +2940,11 @@ static od_frontend_status_t od_frontend_remote(od_client_t *client)
 
 			/* fill internals structs in */
 			if (od_frontend_deploy_prepared_stmt_msg(
-				    server, &server->relay, "sync-point-deploy",
-				    server->parse_msg) != OD_OK) {
+				    server, &server->relay,
+				    "sync-point-deploy") != OD_OK) {
 				status = OD_ESERVER_WRITE;
 				break;
 			}
-			server->parse_msg = NULL;
 
 			machine_msg_t *msg;
 			msg = kiwi_fe_write_sync(NULL);
@@ -2910,24 +2952,25 @@ static od_frontend_status_t od_frontend_remote(od_client_t *client)
 				status = OD_ESERVER_WRITE;
 				break;
 			}
+			int rc;
 			rc = od_write(&server->io, msg);
 			if (rc == -1) {
 				status = OD_ESERVER_WRITE;
 				break;
 			}
 
-			/* enter sync piont mode */
+			/* enter sync point mode */
 			server->sync_point = 1;
 			od_server_sync_request(server, 1);
 
-			while (1) {
+			for (;;) {
 				if (od_server_synchronized(server)) {
 					break;
 				}
 				// await here
 
-				od_log(&instance->logger, "sync-point", client,
-				       server, "process await");
+				od_debug(&instance->logger, "sync-point",
+					 client, server, "process await");
 				status = od_frontend_remote_process_server(
 					server, client, true);
 
@@ -3127,8 +3170,9 @@ static void od_frontend_cleanup(od_client_t *client, char *context,
 			client, KIWI_CONNECTION_FAILURE,
 			"remote server read/write error: failed to wait replica for catchup");
 
-		/* no backend connection should be acquired to this client */
-		assert(client->server == NULL);
+		if (client->server != NULL) {
+			od_router_close(router, client);
+		}
 		break;
 	case OD_ESERVER_READ:
 	case OD_ESERVER_WRITE:
@@ -3281,8 +3325,8 @@ void od_frontend(void *arg)
 	od_client_t *client = arg;
 	od_instance_t *instance = client->global->instance;
 	od_router_t *router = client->global->router;
-	od_extention_t *extentions = client->global->extentions;
-	od_module_t *modules = extentions->modules;
+	od_extension_t *extensions = client->global->extensions;
+	od_module_t *modules = extensions->modules;
 
 	/* log client connection */
 	if (instance->config.log_session) {
@@ -3298,11 +3342,17 @@ void od_frontend(void *arg)
 	if (rc == -1) {
 		od_error(&instance->logger, "startup", client, NULL,
 			 "failed to transfer client io");
+#ifndef YB_SUPPORT_FOUND
+		od_io_close(&client->io);
+		od_client_free(client);
+#else // YB_SUPPORT_FOUND
 		od_client_free_extended(client);
+#endif // YB_SUPPORT_FOUND
 		od_atomic_u32_dec(&router->clients_routing);
 		return;
 	}
 
+#ifdef YB_SUPPORT_FOUND
 	rc = machine_io_attach(client->notify_io);
 	if (rc == -1) {
 		od_error(&instance->logger, "startup", client, NULL,
@@ -3312,6 +3362,7 @@ void od_frontend(void *arg)
 		return;
 	}
 
+#endif // YB_SUPPORT_FOUND
 	/* ensure global client_max limit */
 	uint32_t clients = od_atomic_u32_inc(&router->clients);
 	if (instance->config.client_max_set &&
@@ -3547,8 +3598,8 @@ void od_frontend(void *arg)
 				client->startup.database.value,
 				client->startup.user.value,
 				client->rule != NULL ?
-					      client->rule->client_max :
-					      -1);
+					client->rule->client_max :
+					-1);
 			break;
 		case OD_ROUTER_ERROR_REPLICATION:
 			od_error(

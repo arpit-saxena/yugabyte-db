@@ -58,6 +58,7 @@ void od_config_init(od_config_t *config)
 	config->cache_msg_gc_size = 0;
 	config->coroutine_stack_size = 4;
 	config->hba_file = NULL;
+	config->group_checker_interval = 7000; // 7 seconds
 
 	/* YB */
 	config->yb_use_auth_backend = true;
@@ -135,9 +136,8 @@ void od_config_free(od_config_t *config)
 
 od_config_listen_t *od_config_listen_add(od_config_t *config)
 {
-	od_config_listen_t *listen;
-
-	listen = (od_config_listen_t *)malloc(sizeof(*listen));
+	od_config_listen_t *listen =
+		(od_config_listen_t *)malloc(sizeof(od_config_listen_t));
 	if (listen == NULL) {
 		return NULL;
 	}
@@ -427,7 +427,7 @@ void od_config_print(od_config_t *config, od_logger_t *logger)
 	       od_config_yes_no(config->yb_wait_for_rfq_on_sync));
 
 #ifdef USE_SCRAM
-	od_log(logger, "config", NULL, NULL, "SCRAM auth metod:       OK");
+	od_log(logger, "config", NULL, NULL, "SCRAM auth method:       OK");
 #endif
 
 	od_log(logger, "config", NULL, NULL, "%s", "");

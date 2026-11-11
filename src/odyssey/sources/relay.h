@@ -20,10 +20,10 @@ typedef void (*od_relay_on_read_t)(od_relay_t *, int size);
 struct od_relay {
 	int packet;
 	int packet_skip;
-	uint32_t packet_transmitted;
 
 	machine_msg_t *packet_full;
 	int packet_full_pos;
+	int require_full_prep_stmt;
 	machine_iov_t *iov;
 	machine_cond_t *base;
 	od_io_t *src;
@@ -45,6 +45,8 @@ struct od_relay {
 	bool yb_paused;
 };
 
+static inline od_frontend_status_t
+od_relay_read_pending_aware(od_relay_t *relay);
 static inline od_frontend_status_t od_relay_read(od_relay_t *relay);
 
 static inline void od_relay_init(od_relay_t *relay, od_io_t *io)
@@ -52,6 +54,7 @@ static inline void od_relay_init(od_relay_t *relay, od_io_t *io)
 	relay->packet = 0;
 	relay->packet_skip = 0;
 	relay->packet_full = NULL;
+	relay->require_full_prep_stmt = 0;
 	relay->packet_full_pos = 0;
 	relay->iov = NULL;
 	relay->base = NULL;
@@ -130,10 +133,10 @@ yb_od_relay_start_io(od_relay_t *relay, bool reserve_session_server_connection)
 	// to avoid attaching to a new server connection
 
 	if (machine_cond_try(relay->src->on_read)) {
-		rc = od_relay_read(relay);
+		rc = od_relay_read_pending_aware(relay);
 		if (rc != OD_OK)
 			return rc;
-		// signal machine condition immidiatelly if we are not requested for pending data wait
+		// signal machine condition immediately if we are not requested for pending data wait
 		if (od_likely(!reserve_session_server_connection ||
 			      od_relay_data_pending(relay))) {
 			// Seems like some data arrived
@@ -202,17 +205,24 @@ static inline int yb_od_skip_relay(char *data)
 
 // YB: We want to always process full packets, so commenting this out
 #ifndef YB_SUPPORT_FOUND
-static inline int od_relay_full_packet_required(char *data)
+static inline int od_relay_full_packet_required(char *data,
+						int require_full_prep_stmt)
 {
 	kiwi_header_t *header;
 	header = (kiwi_header_t *)data;
-	if (header->type == KIWI_BE_PARAMETER_STATUS ||
-	    header->type == KIWI_BE_READY_FOR_QUERY ||
-	    header->type == KIWI_BE_ERROR_RESPONSE ||
-	    header->type == KIWI_FE_PARSE || header->type == KIWI_FE_BIND ||
-	    header->type == KIWI_FE_DESCRIBE)
+
+	switch (header->type) {
+	case KIWI_BE_PARAMETER_STATUS:
+	case KIWI_BE_READY_FOR_QUERY:
+	case KIWI_BE_ERROR_RESPONSE:
 		return 1;
-	return 0;
+	case KIWI_FE_PARSE:
+	case KIWI_FE_BIND:
+	case KIWI_FE_DESCRIBE:
+		return require_full_prep_stmt;
+	default:
+		return 0;
+	}
 }
 #endif
 
@@ -329,7 +339,8 @@ od_relay_process(od_relay_t *relay, int *progress, char *data, int size)
 
 		/* YB: Always process full packets */
 #ifndef YB_SUPPORT_FOUND
-		rc = od_relay_full_packet_required(data);
+		rc = od_relay_full_packet_required(
+			data, relay->require_full_prep_stmt);
 		if (!rc)
 			return od_relay_on_packet(relay, data, size);
 #endif
@@ -419,12 +430,46 @@ static inline od_frontend_status_t od_relay_pipeline(od_relay_t *relay)
 	return OD_OK;
 }
 
+/*
+ * This is just like od_relay_read, but we must signal on read cond, when
+ * there are pending bytes, otherwise it will be lost
+ * (in case for tls cached bytes for example)
+*/
+static inline od_frontend_status_t
+od_relay_read_pending_aware(od_relay_t *relay)
+{
+	od_frontend_status_t rc = od_relay_read(relay);
+	if (rc == OD_READAHEAD_IS_FULL) {
+		if (machine_read_pending(relay->src->io)) {
+			machine_cond_signal(relay->src->on_read);
+		}
+		return OD_OK;
+	}
+
+	return rc;
+}
+
+/*
+ * This can lead to lost of relay->src->on_read in case of full readahead
+ * and some pending bytes available.
+ * Consider using od_relay_read_pending_aware instead
+ */
 static inline od_frontend_status_t od_relay_read(od_relay_t *relay)
 {
 	int to_read;
 	to_read = od_readahead_left(&relay->src->readahead);
-	if (to_read == 0)
+	if (to_read == 0) {
+		if (machine_read_pending(relay->src->io)) {
+			/*
+			 * This is situation, when we can read some bytes
+			 * but there is no place in readahead for it.
+			 * Therefore, this should be retry later, when readahead will
+			 * have free space to place the bytes.
+			*/
+			return OD_READAHEAD_IS_FULL;
+		}
 		return OD_OK;
+	}
 
 	char *pos;
 	pos = od_readahead_pos(&relay->src->readahead);
@@ -479,8 +524,8 @@ static inline od_frontend_status_t od_relay_step(od_relay_t *relay,
 	int rc;
 #ifndef YB_SUPPORT_FOUND
 	rc = await_read ?
-			   (machine_cond_wait(relay->src->on_read, UINT32_MAX) == 0) :
-			   machine_cond_try(relay->src->on_read);
+		     (machine_cond_wait(relay->src->on_read, UINT32_MAX) == 0) :
+		     machine_cond_try(relay->src->on_read);
 	if (rc || od_relay_data_pending(relay)) {
 #else // YB_SUPPORT_FOUND
 	if (machine_cond_try(relay->src->on_read)) {
@@ -491,7 +536,7 @@ static inline od_frontend_status_t od_relay_step(od_relay_t *relay,
 			return OD_ATTACH;
 		}
 
-		rc = od_relay_read(relay);
+		rc = od_relay_read_pending_aware(relay);
 		if (rc != OD_OK)
 			return rc;
 

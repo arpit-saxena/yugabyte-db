@@ -293,7 +293,7 @@ od_logger_format(od_logger_t *logger, od_logger_level_t level, char *context,
 					break;
 				}
 
-				// fall throught fix (if client is not defined will write 'none' to log file)
+				// fall through fix (if client is not defined will write 'none' to log file)
 				len = od_snprintf(dst_pos, dst_end - dst_pos,
 						  "none");
 				dst_pos += len;
@@ -523,6 +523,25 @@ static inline void _od_logger_write(od_logger_t *l, char *data, int len,
 	(void)rc;
 }
 
+static inline void log_machine_stats(od_logger_t *logger)
+{
+	uint64_t count_coroutine = 0;
+	uint64_t count_coroutine_cache = 0;
+	uint64_t msg_allocated = 0;
+	uint64_t msg_cache_count = 0;
+	uint64_t msg_cache_gc_count = 0;
+	uint64_t msg_cache_size = 0;
+	machine_stat(&count_coroutine, &count_coroutine_cache, &msg_allocated,
+		     &msg_cache_count, &msg_cache_gc_count, &msg_cache_size);
+
+	od_log(logger, "stats", NULL, NULL,
+	       "logger: msg (%" PRIu64 " allocated, %" PRIu64
+	       " cached, %" PRIu64 " freed, %" PRIu64 " cache_size), "
+	       "coroutines (%" PRIu64 " active, %" PRIu64 " cached)",
+	       msg_allocated, msg_cache_count, msg_cache_gc_count,
+	       msg_cache_size, count_coroutine, count_coroutine_cache);
+}
+
 static inline void od_logger(void *arg)
 {
 	od_logger_t *logger = arg;
@@ -549,6 +568,10 @@ static inline void od_logger(void *arg)
 			}
 			_od_logger_write(logger, le->msg, len, le->lvl);			
 		} break;
+		case OD_MSG_STAT: {
+			log_machine_stats(logger);
+			break;
+		}
 		default: {
 			assert(0);
 		} break;
