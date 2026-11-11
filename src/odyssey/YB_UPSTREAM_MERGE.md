@@ -38,11 +38,16 @@ TestSessionParameters#testSeedMakesConnectionSticky).
 | 4 | ddbbb698b7f (#587) | 6 | a094c0e2c62 | = master at d69940aae41 |
 | 5 | b0e2b9f811a (#623) | 24 | 0e77bad4a84 | = master at 7c6f385c034 |
 | 6 | 87fa7d152d2 (#741) | 83 | 5a6c4cd2387 | = master at f2439459514; 6 classes rerun at 0891322f7d6 |
+| 7 | 806856e2706 (#742) | 1 | affb6473255 | covered by step 8 |
+| 8 | ac95c5f3bdb (tag 1.4.0) | 44 | e60d2980b14 | = master at fa841284ac8 |
 
 Target: the latest upstream release, v1.5.2 (2cca6bf26c1, on REL_1_5_2), 877 commits past
-the import point; 172 are merged. Steps 1-3 were ~20 upstream commits each. From step 5 on
+the import point; 217 are merged (upstream release 1.4.0). Steps 1-3 were ~20 upstream commits each. From step 5 on
 there is one step per upstream release tag and per upstream mass move or rewrite, each of
 those isolated in its own step.
+
+The local release build does not compile LDAP_FOUND code (a fresh configure, as in CI,
+does); from step 8 on those files are syntax-checked with LDAP_FOUND defined.
 
 Only release builds are tested. Asserts and OD_DEVEL_LVL debug prints that upstream adds
 are reviewed by reading, and kept out of YB builds where a YB flow can reach them.
@@ -69,6 +74,11 @@ are reviewed by reading, and kept out of YB builds where a YB flow can reach the
   assembles full packets), the new iov assert in od_frontend_attach (f4a1986aa69), the
   group checker call on reload (849dd44198b), the client_max_routing default of
   workers * 64 (f081cf98c74; YB keeps workers * 16, 0891322f7d6).
+- Step 8, kept as YB had it: the 512 KB machine thread stack (upstream 87999f1a1b uses
+  3 * PTHREAD_STACK_MIN), YB's logger formatter, od_extension_free only inside
+  OD_SYSTEM_SHUTDOWN_CLEANUP (fa841284ac8). Upstream's install and packaging rules are
+  inside if(NOT YB_BUILD_ODYSSEY). Inert: storage watchdog rewrite, show fds, LDAP
+  changes, group validation.
 - sequential_routing (c827bb4774b) and rule groups (8ba1e233a12): the YB config template
   sets neither. The group checker is under #ifndef YB_SUPPORT_FOUND (b8004595a12).
 
@@ -116,6 +126,14 @@ are reviewed by reading, and kept out of YB builds where a YB flow can reach the
 - Upstream issues seen in step 6 and left: mm_socket_read_pending always returns 0;
   mm_io_read_pending dereferences on_read without a NULL check; ldap.c's retry loop uses
   serv after freeing it; the logger queue drops lines silently when full.
+- Step 8, inherited from upstream: od_relay_write sleeps 1 ms on EAGAIN instead of
+  retrying at once (a5a7f59c352), in both directions; every backend connect times out
+  after 30 s (40d95ad269a; no timeout before; unix socket connects never wait); a reload
+  frees the previous storage templates; client coroutines are named.
+- Step 8 correction: the LDAP_DBG redefinition in debug builds is new with the step 8
+  merge, not older as its message suggests in one place; fixed by a98fd159321.
+- Step 7 dropped three YB markers: the wait list and machine_channel_get_size() are
+  upstream code now (806856e2706; YB 1e92a532afa had cherry-picked it).
 - Behaviour changes inherited from upstream: queued clients are served newest first
   (de02985941c); an error-level "client is waiting in routing queue" log (ed6c55436bc); an
   external client whose socket is reset before routing now fails routing
