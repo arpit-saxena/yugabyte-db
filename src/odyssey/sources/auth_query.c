@@ -234,6 +234,7 @@ int od_auth_query(od_client_t *client, char *peer)
 	}
 
 	/* preformat and execute query */
+	/* YB */
 	char *query = malloc(yb_max_query_size + 1);
 	if (query == NULL) {
 		od_debug(&instance->logger, "auth_query", auth_client, server,
