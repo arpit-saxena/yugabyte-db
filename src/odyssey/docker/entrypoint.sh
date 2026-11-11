@@ -6,6 +6,13 @@ cd /test_dir/test && /usr/bin/odyssey_test
 
 setup
 
+# odyssey rule-address test
+/rule-address/test.sh
+if [ $? -eq 1 ]
+then
+	exit 1
+fi
+
 # odyssey target session attrs test
 /tsa/tsa.sh
 if [ $? -eq 1 ]
@@ -67,6 +74,7 @@ ody-stop
 /shell-test/console_role_test.sh
 /shell-test/parse_pg_options_test.sh
 /shell-test/override_pg_options_test.sh
+/shell-test/pool_size_test.sh
 ody-stop
 
 ody-start

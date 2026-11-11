@@ -51,6 +51,8 @@ struct od_client {
 	uint64_t time_setup;
 	uint64_t time_last_active;
 
+	bool is_watchdog;
+
 	kiwi_be_startup_t startup;
 	/*
 	 * YB: All GUC settings sent in startup packet other than
@@ -94,6 +96,10 @@ struct od_client {
 	char *ldap_auth_dn;
 #endif
 
+	/* external_id for logging additional ifno about client */
+	char *external_id;
+
+	/* YB */
 	uint64_t client_id;
 	int64_t yb_db_oid;
 	int64_t yb_user_oid;
@@ -163,6 +169,7 @@ static inline void od_client_init(od_client_t *client)
 	client->ldap_storage_password_len = 0;
 	client->ldap_auth_dn = NULL;
 #endif
+	client->external_id = NULL;
 
 	kiwi_be_startup_init(&client->startup);
 	kiwi_vars_init(&client->yb_startup_settings, false);
@@ -214,6 +221,10 @@ static inline void od_client_free(od_client_t *client)
 	if (client->prep_stmt_ids) {
 		od_hashmap_free(client->prep_stmt_ids);
 	}
+	if (client->external_id) {
+		free(client->external_id);
+	}
+	/* YB */
 	kiwi_be_startup_free(&client->startup);
 	yb_kiwi_vars_free(&client->yb_vars_startup);
 	yb_kiwi_vars_free(&client->yb_vars_session);

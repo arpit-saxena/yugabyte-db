@@ -14,7 +14,7 @@ typedef struct {
 
 	od_global_t *global;
 	void *route;
-	int idle_timestamp;
+	int64_t idle_timestamp;
 
 	od_list_t link;
 

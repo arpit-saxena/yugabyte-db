@@ -102,6 +102,13 @@ static inline long od_memtol(char *data, size_t data_size, char **end_ptr,
 	return result;
 }
 
+static inline uint32 od_bswap32(uint32 x)
+{
+	return ((x << 24) & 0xff000000) | ((x << 8) & 0x00ff0000) |
+	       ((x >> 8) & 0x0000ff00) | ((x >> 24) & 0x000000ff);
+}
+
+/* YB */
 static inline bool yb_od_streq(const char *s1, size_t s1_len,
 							   const char *s2, size_t s2_len)
 {

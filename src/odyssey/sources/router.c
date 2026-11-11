@@ -124,7 +124,9 @@ static inline int od_drop_obsolete_rule_connections_cb(od_route_t *route,
 		assert(rule);
 		assert(obsolete_rule);
 		if (strcmp(rule->user_name, obsolete_rule->usr_name) == 0 &&
-		    strcmp(rule->db_name, obsolete_rule->db_name) == 0) {
+		    strcmp(rule->db_name, obsolete_rule->db_name) == 0 &&
+		    od_address_range_equals(&rule->address_range,
+					    &obsolete_rule->address_range)) {
 			od_route_kill_client_pool(route);
 			return 0;
 		}
@@ -159,7 +161,8 @@ int od_router_reconfigure(od_router_t *router, od_rules_t *rules)
 			od_rule_key_t *rk;
 			rk = od_container_of(i, od_rule_key_t, link);
 			od_log(&instance->logger, "reload config", NULL, NULL,
-			       "added rule: %s %s", rk->usr_name, rk->db_name);
+			       "added rule: %s %s %s", rk->usr_name,
+			       rk->db_name, rk->address_range.string_value);
 		}
 
 		od_list_foreach(&deleted, i)
@@ -167,8 +170,8 @@ int od_router_reconfigure(od_router_t *router, od_rules_t *rules)
 			od_rule_key_t *rk;
 			rk = od_container_of(i, od_rule_key_t, link);
 			od_log(&instance->logger, "reload config", NULL, NULL,
-			       "deleted rule: %s %s", rk->usr_name,
-			       rk->db_name);
+			       "deleted rule: %s %s %s", rk->usr_name,
+			       rk->db_name, rk->address_range.string_value);
 		}
 
 		{
@@ -629,14 +632,24 @@ od_router_status_t od_router_route(od_router_t *router, od_client_t *client)
 	/* match latest version of route rule */
 	od_rule_t *rule =
 		NULL; // initialize rule for (line 365) and flag '-Wmaybe-uninitialized'
+
+	struct sockaddr_storage sa;
+	int salen;
+	struct sockaddr *saddr;
+	int rc;
 	switch (client->type) {
 	case OD_POOL_CLIENT_INTERNAL:
 		rule = od_rules_forward(&router->rules, startup->database.value,
-					startup->user.value, 1);
+					startup->user.value, NULL, 1);
 		break;
 	case OD_POOL_CLIENT_EXTERNAL:
+		salen = sizeof(sa);
+		saddr = (struct sockaddr *)&sa;
+		rc = machine_getpeername(client->io.io, saddr, &salen);
+		if (rc == -1)
+			return OD_ROUTER_ERROR;
 		rule = od_rules_forward(&router->rules, startup->database.value,
-					startup->user.value, 0);
+					startup->user.value, &sa, 0);
 		break;
 	case OD_POOL_CLIENT_UNDEF: // create that case for correct work of '-Wswitch' flag
 		break;
@@ -647,8 +660,9 @@ od_router_status_t od_router_route(od_router_t *router, od_client_t *client)
 		return OD_ROUTER_ERROR_NOT_FOUND;
 	}
 	od_debug(&instance->logger, "routing", NULL, NULL,
-		 "matching rule: %s %s with %s routing type to %s client",
+		 "matching rule: %s %s %s with %s routing type to %s client",
 		 rule->db_name, rule->user_name,
+		 rule->address_range.string_value,
 		 rule->pool->routing_type == NULL ? "client visible" :
 							  rule->pool->routing_type,
 		 client->type == OD_POOL_CLIENT_INTERNAL ? "internal" :
@@ -691,7 +705,7 @@ od_router_status_t od_router_route(od_router_t *router, od_client_t *client)
 		switch (ldap_rc) {
 		case OK_RESPONSE: {
 			od_ldap_endpoint_lock(rule->ldap_endpoint);
-			ldap_server->idle_timestamp = (int)time(NULL);
+			ldap_server->idle_timestamp = time(NULL);
 			od_ldap_server_pool_set(
 				rule->ldap_endpoint->ldap_search_pool,
 				ldap_server, OD_SERVER_IDLE);
@@ -715,7 +729,7 @@ od_router_status_t od_router_route(od_router_t *router, od_client_t *client)
 		}
 		case LDAP_INSUFFICIENT_ACCESS: {
 			od_ldap_endpoint_lock(rule->ldap_endpoint);
-			ldap_server->idle_timestamp = (int)time(NULL);
+			ldap_server->idle_timestamp = time(NULL);
 			od_ldap_server_pool_set(
 				rule->ldap_endpoint->ldap_search_pool,
 				ldap_server, OD_SERVER_IDLE);
@@ -1496,6 +1510,7 @@ void od_router_detach(od_router_t *router, od_client_t *client)
 
 	client->server = NULL;
 	server->client = NULL;
+	/* YB */
 	if (route->rule->pool->reserve_prepared_statement) {
 		if (!yb_od_parse_queue_empty(&server->parse_queue)) {
 			int pq_count = yb_od_parse_queue_count(&server->parse_queue);
@@ -1560,6 +1575,7 @@ void od_router_detach(od_router_t *router, od_client_t *client)
 	if (od_likely(!server->offline) && !server->yb_sticky_connection &&
 	    !server->reset_timeout && !server_expired && is_parse_queue_empty) {
 		od_instance_t *instance = server->global->instance;
+		/* YB */
 		if ((route->id.physical_rep || route->id.logical_rep) &&
 		    (!yb_is_control_pool(route))) {
 			od_debug(&instance->logger, "expire-replication", NULL,

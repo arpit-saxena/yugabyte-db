@@ -145,6 +145,9 @@ int od_auth_query(od_client_t *client, char *peer)
 		if (cache_value->passwd_len > 0) {
 			/*  */
 			password->password = malloc(password->password_len + 1);
+			if (password->password == NULL) {
+				goto error;
+			}
 			strncpy(password->password, cache_value->passwd,
 				cache_value->passwd_len);
 			password->password[password->password_len] = '\0';
@@ -183,9 +186,17 @@ int od_auth_query(od_client_t *client, char *peer)
 		     rule->auth_query_db, strlen(rule->auth_query_db) + 1);
 #endif
 
+	/* set io from client */
+	od_io_t auth_client_io = auth_client->io;
+	auth_client->io = client->io;
+
 	/* route */
 	od_router_status_t status;
 	status = od_router_route(router, auth_client);
+
+	/* return io auth_client back */
+	auth_client->io = auth_client_io;
+
 	if (status != OD_ROUTER_OK) {
 		od_debug(&instance->logger, "auth_query", auth_client, NULL,
 			 "failed to route internal auth query client: %s",
@@ -284,6 +295,9 @@ int od_auth_query(od_client_t *client, char *peer)
 	}
 	cache_value->passwd_len = password->password_len;
 	cache_value->passwd = malloc(password->password_len);
+	if (cache_value->passwd == NULL) {
+		goto error;
+	}
 	strncpy(cache_value->passwd, password->password,
 		cache_value->passwd_len);
 

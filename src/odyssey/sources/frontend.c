@@ -1477,6 +1477,11 @@ static od_frontend_status_t od_frontend_remote_client(od_relay_t *relay,
 			 "%s", kiwi_fe_type_to_string(type));
 
 	od_frontend_status_t retstatus = OD_OK;
+#ifndef YB_SUPPORT_FOUND
+	machine_msg_t *msg;
+	msg = NULL;
+	bool forwarded = 0;
+#endif // YB_SUPPORT_FOUND
 	/*
 	 * YB: This will be set to false if the packet produces a
 	 * ReadyForQuery response
@@ -2274,6 +2279,15 @@ static od_frontend_status_t od_frontend_remote_client(od_relay_t *relay,
 		break;
 	}
 
+#ifndef YB_SUPPORT_FOUND
+	/* If the retstatus is not SKIP */
+	if (route->rule->pool->reserve_prepared_statement && forwarded != 1 &&
+	    msg != NULL) {
+		msg = kiwi_fe_copy_msg(msg, data, size);
+		od_write(&server->io, msg);
+		retstatus = OD_SKIP;
+	}
+#endif // YB_SUPPORT_FOUND
 	/* update server stats */
 	od_stat_query_start(&server->stats_state);
 	return retstatus;
@@ -3164,6 +3178,9 @@ void od_frontend(void *arg)
 			goto cleanup;
 		}
 		 */
+
+		char peer[128];
+		od_getpeername(client->io.io, peer, sizeof(peer), 1, 0);
 
 		if (instance->config.log_session) {
 			yb_od_session(&instance->logger, "startup", client, NULL,
