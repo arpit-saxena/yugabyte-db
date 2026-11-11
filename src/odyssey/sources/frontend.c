@@ -378,7 +378,9 @@ od_frontend_attach(od_client_t *client, char *context,
 			 server->id.id_prefix,
 			 (int)sizeof(server->id.id_prefix), server->id.id);
 
+#ifndef YB_SUPPORT_FOUND
 		assert(od_server_synchronized(server));
+#endif // YB_SUPPORT_FOUND
 
 		/* connect to server, if necessary */
 		if (server->io.io) {

@@ -1409,7 +1409,9 @@ attach:
 		}
 	}
 
+#ifndef YB_SUPPORT_FOUND
 	assert(od_server_synchronized(server));
+#endif // YB_SUPPORT_FOUND
 
 	/*
 	* XXX: this logic breaks some external solutions that use

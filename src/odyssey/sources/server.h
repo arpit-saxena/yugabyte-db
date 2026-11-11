@@ -253,7 +253,9 @@ static inline int od_server_in_sync_point(od_server_t *server)
 
 static inline int od_server_synchronized(od_server_t *server)
 {
+#ifndef YB_SUPPORT_FOUND
 	assert(server->sync_request >= server->sync_reply);
+#endif // YB_SUPPORT_FOUND
 	/*
 	 * YB: We are not synchronized as long as there have been packets
 	 * sent after the last sync
