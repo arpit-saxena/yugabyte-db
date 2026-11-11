@@ -3209,7 +3209,7 @@ void yb_read_conf_from_env_var(od_rules_t *rules, od_config_t *config,
 #endif
 
 		/* Set storage_user and storage_db for control connection pool */
-		if (rule->pool->routing == OD_RULE_POOL_INTERVAL) {
+		if (rule->pool->routing == OD_RULE_POOL_INTERNAL) {
 			if (rule->storage_user)
 				free(rule->storage_user);
 			rule->storage_user = strndup(yb_ctrl_username, USER_NAME_MAX_LEN - 1);
