@@ -189,11 +189,15 @@ int od_reset(od_server_t *server)
 				 yb_wait_timeout, wait_try);
 			wait_try++;
 			rc = od_backend_ready_wait(server, "reset", 1,
-						   yb_wait_timeout);
+						   /* YB */
+						   yb_wait_timeout,
+						   1 /*ignore server errors*/);
+			/* YB */
 			/* can be -1 or -2 */
 			if (rc < 0)
 				break;
 		}
+		/* YB */
 		if (rc < 0) {
 			if (!machine_timedout())
 				goto error;
@@ -231,13 +235,28 @@ int od_reset(od_server_t *server)
 			wait_try_cancel++;
 			rc = od_cancel(server->global, route->rule->storage,
 				       &server->key, &server->id);
-			if (rc == -1)
+			if (rc == NOT_OK_RESPONSE)
 				goto error;
 			continue;
 		}
 		assert(od_server_synchronized(server));
 		break;
 	}
+
+	/* Request one more sync point here.
+	* In `od_server_synchronized` we
+	* count number of sync/query msg send to connection
+	* and number of RFQ received, if this numbers are equal,  
+	* we decide server connection as sync. However, this might be 
+	* not true, if client-server relay advanced some extended proto
+	* msgs without sync. To safely execute discard queries, we need to
+	* advadance sync point first.
+	*/
+
+	if (od_backend_request_sync_point(server) == NOT_OK_RESPONSE) {
+		goto error;
+	}
+
 	od_debug(&instance->logger, "reset", server->client, server,
 		 "synchronized");
 
@@ -250,10 +269,12 @@ int od_reset(od_server_t *server)
 	if (route->rule->pool->rollback) {
 		if (server->is_transaction) {
 			char query_rlb[] = "ROLLBACK";
-			rc = od_backend_query(server, "reset-rollback",
-					      query_rlb, NULL,
-					      sizeof(query_rlb), yb_wait_timeout,
-					      1);
+			rc = od_backend_query(
+				server, "reset-rollback", query_rlb, NULL,
+				/* YB */
+				sizeof(query_rlb), yb_wait_timeout, 1,
+				0 /*do not ignore server error messages*/);
+			/* YB */
 			if (rc < 0)
 				goto error;
 			assert(!server->is_transaction);
@@ -263,9 +284,12 @@ int od_reset(od_server_t *server)
 	/* send DISCARD ALL */
 	if (route->rule->pool->discard) {
 		char query_discard[] = "DISCARD ALL";
-		rc = od_backend_query(server, "reset-discard", query_discard,
-				      NULL, sizeof(query_discard), yb_wait_timeout,
-				      1);
+		rc = od_backend_query(
+			server, "reset-discard", query_discard, NULL,
+			/* YB */
+			sizeof(query_discard), yb_wait_timeout, 1,
+			0 /*do not ignore server error messages*/);
+		/* YB */
 		if (rc < 0)
 			goto error;
 	}
@@ -275,9 +299,12 @@ int od_reset(od_server_t *server)
 	    route->rule->pool->discard_query == NULL) {
 		char query_discard[] =
 			"SET SESSION AUTHORIZATION DEFAULT;RESET ALL;CLOSE ALL;UNLISTEN *;SELECT pg_advisory_unlock_all();DISCARD PLANS;DISCARD SEQUENCES;DISCARD TEMP;";
-		rc = od_backend_query(server, "reset-discard-smart",
-				      query_discard, NULL,
-				      sizeof(query_discard), yb_wait_timeout, 1);
+		rc = od_backend_query(
+			server, "reset-discard-smart", query_discard, NULL,
+			/* YB */
+			sizeof(query_discard), yb_wait_timeout, 1,
+			0 /*do not ignore server error messages*/);
+		/* YB */
 		if (rc < 0)
 			goto error;
 	}
@@ -303,11 +330,12 @@ int od_reset(od_server_t *server)
 		goto drop;
 	}
 	if (route->rule->pool->discard_query != NULL) {
-		rc = od_backend_query(server, "reset-discard-smart-string",
-				      route->rule->pool->discard_query, NULL,
-				      strlen(route->rule->pool->discard_query) +
-					      1,
-				      wait_timeout, 1);
+		rc = od_backend_query(
+			server, "reset-discard-smart-string",
+			route->rule->pool->discard_query, NULL,
+			strlen(route->rule->pool->discard_query) + 1,
+			wait_timeout, 1,
+			0 /*do not ignore server error messages*/);
 		if (rc == NOT_OK_RESPONSE)
 			goto error;
 	}

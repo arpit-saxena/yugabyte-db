@@ -246,6 +246,8 @@ static inline od_frontend_status_t od_relay_on_packet_msg(od_relay_t *relay,
 		status = OD_OK;
 	/* fallthrough */
 		yb_od_attribute_fallthrough;
+	case OD_REQ_SYNC:
+	/* fallthrough */
 	default:
 		machine_msg_free(msg);
 		break;
@@ -273,8 +275,15 @@ static inline od_frontend_status_t od_relay_on_packet(od_relay_t *relay,
 		/* fallthrough */
 	case OD_WAIT_SYNC:
 		rc = machine_iov_add_pointer(relay->iov, data, size);
+
+		od_dbg_printf_on_dvl_lvl(1, "relay %p advance msg %c\n", relay,
+					 *data);
 		if (rc == -1)
 			return OD_EOOM;
+		break;
+	case OD_REQ_SYNC:
+		/* fallthrough */
+		relay->packet_skip = 1;
 		break;
 	case OD_SKIP:
 		relay->packet_skip = 1;
@@ -357,7 +366,10 @@ od_relay_process(od_relay_t *relay, int *progress, char *data, int size)
 
 	if (relay->packet_skip)
 		return OD_OK;
+
 	rc = machine_iov_add_pointer(relay->iov, data, to_parse);
+
+	od_dbg_printf_on_dvl_lvl(1, "relay %p advance msg %c\n", relay, *data);
 	if (rc == -1)
 		return OD_EOOM;
 
@@ -381,6 +393,9 @@ static inline od_frontend_status_t od_relay_pipeline(od_relay_t *relay)
 		rc = od_relay_process(relay, &progress, current, end - current);
 		current += progress;
 		od_readahead_pos_read_advance(&relay->src->readahead, progress);
+		if (rc == OD_REQ_SYNC) {
+			return OD_REQ_SYNC;
+		}
 		if (rc != OD_OK) {
 			if (rc == OD_UNDEF)
 				rc = OD_OK;
@@ -451,11 +466,17 @@ static inline od_frontend_status_t od_relay_write(od_relay_t *relay)
 	return OD_OK;
 }
 
-static inline od_frontend_status_t od_relay_step(od_relay_t *relay)
+static inline od_frontend_status_t od_relay_step(od_relay_t *relay,
+						 bool await_read)
 {
 	/* on read event */
+	od_frontend_status_t retstatus;
+	retstatus = OD_OK;
 	int rc;
-	if (machine_cond_try(relay->src->on_read)) {
+	rc = await_read ?
+			   (machine_cond_wait(relay->src->on_read, UINT32_MAX) == 0) :
+			   machine_cond_try(relay->src->on_read);
+	if (rc || od_relay_data_pending(relay)) {
 		if (relay->dst == NULL) {
 			/* signal to retry on read logic */
 			machine_cond_signal(relay->src->on_read);
@@ -482,7 +503,9 @@ static inline od_frontend_status_t od_relay_step(od_relay_t *relay)
 			return rc;
 		}
 
-		if (rc != OD_OK)
+		if (rc == OD_REQ_SYNC) {
+			retstatus = OD_REQ_SYNC;
+		} else if (rc != OD_OK)
 			return rc;
 
 		if (machine_iov_pending(relay->iov)) {
@@ -494,7 +517,7 @@ static inline od_frontend_status_t od_relay_step(od_relay_t *relay)
 	}
 
 	if (relay->dst == NULL)
-		return OD_OK;
+		return retstatus;
 
 	/* on write event */
 	if (machine_cond_try(relay->dst->on_write)) {
@@ -519,7 +542,7 @@ static inline od_frontend_status_t od_relay_step(od_relay_t *relay)
 		}
 	}
 
-	return OD_OK;
+	return retstatus;
 }
 
 static inline od_frontend_status_t od_relay_flush(od_relay_t *relay)

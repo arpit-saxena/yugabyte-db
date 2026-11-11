@@ -723,6 +723,7 @@ int od_backend_ready(od_server_t *server, char *data, uint32_t size)
 	}
 
 	/* update server sync reply state */
+
 	od_server_sync_reply(server);
 	return 0;
 }
@@ -1025,6 +1026,7 @@ static inline int od_backend_startup(od_server_t *server,
 
 	/* update request count and sync state */
 	od_server_sync_request(server, 1);
+	assert(server->client);
 
 	while (1) {
 		msg = od_read(&server->io, UINT32_MAX);
@@ -1774,11 +1776,14 @@ int od_backend_update_parameter(od_server_t *server, char *context, char *data,
 }
 
 int od_backend_ready_wait(od_server_t *server, char *context, int count,
-			  uint32_t time_ms)
+			  uint32_t time_ms, uint32_t ignore_errors)
 {
 	od_instance_t *instance = server->global->instance;
 	int ready = 0;
-	for (;;) {
+	int query_rc;
+	query_rc = 0;
+
+	for (; !od_server_synchronized(server);) {
 		machine_msg_t *msg;
 		msg = od_read(&server->io, time_ms);
 		if (msg == NULL) {
@@ -1808,15 +1813,18 @@ int od_backend_ready_wait(od_server_t *server, char *context, int count,
 							 machine_msg_data(msg),
 							 machine_msg_size(msg),
 							 1);
+			machine_msg_free(msg);
 			if (rc == -1) {
-				machine_msg_free(msg);
 				return -1;
 			}
 		} else if (type == KIWI_BE_ERROR_RESPONSE) {
 			od_backend_error(server, context, machine_msg_data(msg),
 					 machine_msg_size(msg));
 			machine_msg_free(msg);
-			continue;
+			if (!ignore_errors) {
+				query_rc = -1;
+			}
+		/* YB */
 		} else if (type == YB_BE_CLOSE_COMPLETE_PREP_STMT_NAME) {
 			od_backend_evict_server_hashmap(server, context,
 				machine_msg_data(msg), machine_msg_size(msg));
@@ -1851,11 +1859,9 @@ int od_backend_ready_wait(od_server_t *server, char *context, int count,
 		} else if (type == KIWI_BE_READY_FOR_QUERY) {
 			od_backend_ready(server, machine_msg_data(msg),
 					 machine_msg_size(msg));
+			machine_msg_free(msg);
 			ready++;
-			if (ready == count) {
-				machine_msg_free(msg);
-				return 0;
-			}
+		/* YB */
 		} else if (type == YB_BE_SYNC_ACK) {
 			int rc = yb_drain_parse_queue_till_sync(server,
 								server->client);
@@ -1863,9 +1869,12 @@ int od_backend_ready_wait(od_server_t *server, char *context, int count,
 			if (rc == NOT_OK_RESPONSE)
 				return -1;
 			continue;
+		} else {
+			machine_msg_free(msg);
 		}
-		machine_msg_free(msg);
 	}
+
+	return query_rc;
 	/* never reached */
 }
 
@@ -1895,18 +1904,19 @@ od_retcode_t od_backend_query_send(od_server_t *server, char *context,
 
 	/* update server sync state */
 	od_server_sync_request(server, 1);
+	assert(server->client);
 	return OK_RESPONSE;
 }
 
 od_retcode_t od_backend_query(od_server_t *server, char *context, char *query,
 			      char *param, int len, uint32_t timeout,
-			      uint32_t count)
+			      uint32_t count, uint32_t ignore_errors)
 {
 	if (od_backend_query_send(server, context, query, param, len) ==
 	    NOT_OK_RESPONSE) {
 		return NOT_OK_RESPONSE;
 	}
-	od_retcode_t rc =
-		od_backend_ready_wait(server, context, count, timeout);
+	od_retcode_t rc = od_backend_ready_wait(server, context, count, timeout,
+						ignore_errors);
 	return rc;
 }

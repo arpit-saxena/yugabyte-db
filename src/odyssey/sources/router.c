@@ -1368,6 +1368,11 @@ od_router_status_t od_router_attach(od_router_t *router,
 		return OD_ROUTER_ERROR;
 	}
 	od_id_generate(&server->id, "s");
+	od_dbg_printf_on_dvl_lvl(1, "server %s%.*s has relay %p\n",
+				 server->id.id_prefix,
+				 (signed)sizeof(server->id.id), server->id.id,
+				 &server->relay);
+	/* YB */
 	server->global = client_for_router->global;
 	server->route = route;
 	server->yb_slot_claimed = yb_slot_claimed;
@@ -1401,6 +1406,8 @@ attach:
 			route->server_pool.yb_count_sticky++;
 		}
 	}
+
+	assert(od_server_synchronized(server));
 
 	/*
 	* XXX: this logic breaks some external solutions that use
@@ -1500,6 +1507,11 @@ void od_router_detach(od_router_t *router, od_client_t *client)
 	/* detach from current machine event loop */
 	od_server_t *server = client->server;
 
+	assert(server != NULL);
+#ifndef YB_SUPPORT_FOUND
+	assert(od_server_synchronized(server));
+	od_io_detach(&server->io);
+#else // YB_SUPPORT_FOUND
 	/* YB: Check that we actually have a valid connection with the server 
 	 * before detaching. We can arrive here even when we don't have a 
 	 * valid connection. For eg. when the external client times out waiting
@@ -1507,6 +1519,7 @@ void od_router_detach(od_router_t *router, od_client_t *client)
 	 */
 	if (server->io.io != NULL)
 		od_io_detach(&server->io);
+#endif // YB_SUPPORT_FOUND
 
 	od_route_lock(route);
 

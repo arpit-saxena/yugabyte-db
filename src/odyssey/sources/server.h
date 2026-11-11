@@ -50,6 +50,8 @@ struct od_server {
 	uint64_t sync_request;
 	uint64_t sync_reply;
 
+	/* to swallow some internal msgs */
+	machine_msg_t *parse_msg;
 	int idle_time;
 
 	kiwi_key_t key;
@@ -70,6 +72,7 @@ struct od_server {
 
 	/* allocated prepared statements ids */
 	od_hashmap_t *prep_stmts;
+	int sync_point;
 	/* YB: LRU list and count of prep stmts */
 	od_list_t yb_prep_stmt_lru;
 	int yb_prep_stmt_count;
@@ -154,6 +157,8 @@ static inline void od_server_init(od_server_t *server, int reserve_prep_stmts)
 	server->deploy_sync = 0;
 	server->sync_request = 0;
 	server->sync_reply = 0;
+	server->sync_point = 0;
+	server->parse_msg = NULL;
 	server->init_time_us = machine_time_us();
 	server->error_connect = NULL;
 	server->offline = 0;
@@ -241,8 +246,14 @@ static inline int od_server_in_deploy(od_server_t *server)
 	return server->deploy_sync > 0;
 }
 
+static inline int od_server_in_sync_point(od_server_t *server)
+{
+	return server->sync_point > 0;
+}
+
 static inline int od_server_synchronized(od_server_t *server)
 {
+	assert(server->sync_request >= server->sync_reply);
 	/*
 	 * YB: We are not synchronized as long as there have been packets
 	 * sent after the last sync
