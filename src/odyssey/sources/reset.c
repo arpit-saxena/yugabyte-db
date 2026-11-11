@@ -123,7 +123,12 @@ int od_reset(od_server_t *server)
 	 * if msg pipelining is used by driver.
 	 * Else drop connection, to avoid complexness of state maintenance
 	 */
+#ifndef YB_SUPPORT_FOUND
+	if (server->in_out_response_received !=
+	    server->done_fail_response_received) {
+#else // YB_SUPPORT_FOUND
 	if (yb_is_server_in_copy_mode(server)) {
+#endif // YB_SUPPORT_FOUND
 		od_log(&instance->logger, "reset", server->client, server,
 		       "server left in copy, closing and drop connection");
 		goto drop;
@@ -265,8 +270,9 @@ int od_reset(od_server_t *server)
 			goto error;
 	}
 
-	/* send smard DISCARD ALL */
-	if (route->rule->pool->smart_discard) {
+	/* send smart discard */
+	if (route->rule->pool->smart_discard &&
+	    route->rule->pool->discard_query == NULL) {
 		char query_discard[] =
 			"SET SESSION AUTHORIZATION DEFAULT;RESET ALL;CLOSE ALL;UNLISTEN *;SELECT pg_advisory_unlock_all();DISCARD PLANS;DISCARD SEQUENCES;DISCARD TEMP;";
 		rc = od_backend_query(server, "reset-discard-smart",
@@ -295,6 +301,15 @@ int od_reset(od_server_t *server)
 		od_log(&instance->logger, "reset", server->client,
 			       server, "still in active transaction after reset, closing the backend");
 		goto drop;
+	}
+	if (route->rule->pool->discard_query != NULL) {
+		rc = od_backend_query(server, "reset-discard-smart-string",
+				      route->rule->pool->discard_query, NULL,
+				      strlen(route->rule->pool->discard_query) +
+					      1,
+				      wait_timeout, 1);
+		if (rc == NOT_OK_RESPONSE)
+			goto error;
 	}
 
 	/* ready */

@@ -753,7 +753,7 @@ int od_pool_validate(od_logger_t *logger, od_rule_pool_t *pool, char *db_name,
 		return NOT_OK_RESPONSE;
 	}
 
-	// reserve prepare statemetn feature
+	// reserve prepare statement feature
 	if (pool->reserve_prepared_statement &&
 	    pool->pool == OD_RULE_POOL_SESSION) {
 		od_error(
@@ -777,6 +777,16 @@ int od_pool_validate(od_logger_t *logger, od_rule_pool_t *pool, char *db_name,
 			"rule '%s.%s': pool smart discard is forbidden without using prepared statements support",
 			db_name, user_name);
 		return NOT_OK_RESPONSE;
+	}
+
+	if (pool->discard_query && pool->reserve_prepared_statement) {
+		if (strcasestr(pool->discard_query, "DEALLOCATE ALL")) {
+			od_error(
+				logger, "rules", NULL, NULL,
+				"rule '%s.%s': cannot support prepared statements when 'DEALLOCATE ALL' present in discard string",
+				db_name, user_name);
+			return NOT_OK_RESPONSE;
+		}
 	}
 
 	return OK_RESPONSE;
@@ -1047,8 +1057,8 @@ void od_rules_print(od_rules_t *rules, od_logger_t *logger)
 		od_log(logger, "storage", NULL, NULL,
 		       "  storage types           %s",
 		       storage->storage_type == OD_RULE_STORAGE_REMOTE ?
-			       "remote" :
-			       "local");
+				     "remote" :
+				     "local");
 
 		od_log(logger, "storage", NULL, NULL, "  host          %s",
 		       storage->host ? storage->host : "<unix socket>");
@@ -1129,8 +1139,8 @@ void od_rules_print(od_rules_t *rules, od_logger_t *logger)
 		od_log(logger, "rules", NULL, NULL,
 		       "  pool routing                      %s",
 		       rule->pool->routing_type == NULL ?
-			       "client visible" :
-			       rule->pool->routing_type);
+				     "client visible" :
+				     rule->pool->routing_type);
 		od_log(logger, "rules", NULL, NULL,
 		       "  pool size                         %d",
 		       rule->pool->size);
@@ -1165,7 +1175,7 @@ void od_rules_print(od_rules_t *rules, od_logger_t *logger)
 			od_log(logger, "rules", NULL, NULL,
 			       "  pool prepared statement support   %s",
 			       rule->pool->reserve_prepared_statement ? "yes" :
-									"no");
+									      "no");
 		}
 
 		if (rule->client_max_set)
@@ -1224,7 +1234,7 @@ void od_rules_print(od_rules_t *rules, od_logger_t *logger)
 		od_log(logger, "rules", NULL, NULL,
 		       "  host                              %s",
 		       rule->storage->host ? rule->storage->host :
-					     "<unix socket>");
+						   "<unix socket>");
 		od_log(logger, "rules", NULL, NULL,
 		       "  port                              %d",
 		       rule->storage->port);

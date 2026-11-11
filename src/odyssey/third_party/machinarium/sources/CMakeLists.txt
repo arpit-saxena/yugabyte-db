@@ -42,6 +42,7 @@ set(machine_src
     wait_list.c
     zpq_stream.c
     compression.c
+    cert_hash.c
     # mm_tls_get_context() builds the server SSL_CTX through be_tls_init();
     # The definition lives in this archive so that every consumer resolves
     # it without linking the odyssey executable (like odyssey_test and

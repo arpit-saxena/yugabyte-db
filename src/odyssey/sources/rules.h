@@ -133,6 +133,13 @@ struct od_rule {
 	double *quantiles;
 	int quantiles_count;
 	uint64_t server_lifetime_us;
+
+	/* some settings that we are going to force-on
+	while backend connection acquiring */
+	untyped_kiwi_var_t *backend_startup_vars;
+	size_t backend_startup_vars_sz;
+
+	/* YB */
 	int min_pool_size;
 	od_list_t link;
 	int yb_jitter_time;

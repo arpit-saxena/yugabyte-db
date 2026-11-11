@@ -26,6 +26,11 @@ struct od_server {
 	od_relay_t relay;
 	int is_allocated;
 	int is_transaction;
+#ifndef YB_SUPPORT_FOUND
+	/* Copy stmt state */
+	uint64_t done_fail_response_received;
+	uint64_t in_out_response_received;
+#else // YB_SUPPORT_FOUND
 	/*
 	 * YB: With CopyInResponse, sync is ignored till CopyDone/CopyFail is received
 	 * from client whereas in CopyOutResponse backend is responsible for sending
@@ -38,6 +43,7 @@ struct od_server {
 	uint64_t yb_done_fail_for_copy_out_response;
 	uint64_t yb_in_response_received;
 	uint64_t yb_out_response_received;
+#endif // YB_SUPPORT_FOUND
 	/**/
 	int deploy_sync;
 	od_stat_state_t stats_state;
@@ -129,6 +135,7 @@ static const size_t OD_SERVER_DEFAULT_HASHMAP_SZ = 420;
 
 static inline void od_server_init(od_server_t *server, int reserve_prep_stmts)
 {
+	memset(server, 0, sizeof(od_server_t));
 	server->state = OD_SERVER_UNDEF;
 	server->route = NULL;
 	server->client = NULL;
@@ -137,10 +144,15 @@ static inline void od_server_init(od_server_t *server, int reserve_prep_stmts)
 	server->idle_time = 0;
 	server->is_allocated = 0;
 	server->is_transaction = 0;
+#ifndef YB_SUPPORT_FOUND
+	server->done_fail_response_received = 0;
+	server->in_out_response_received = 0;
+#else // YB_SUPPORT_FOUND
 	server->yb_done_fail_for_copy_in_response = 0;
 	server->yb_done_fail_for_copy_out_response = 0;
 	server->yb_in_response_received = 0;
 	server->yb_out_response_received = 0;
+#endif // YB_SUPPORT_FOUND
 	server->deploy_sync = 0;
 	server->sync_request = 0;
 	server->sync_reply = 0;

@@ -1090,13 +1090,21 @@ static od_frontend_status_t od_frontend_remote_server(od_relay_t *relay,
 		}
 		break;
 	case KIWI_BE_COPY_OUT_RESPONSE:
+#ifndef YB_SUPPORT_FOUND
+		server->in_out_response_received++;
+#else // YB_SUPPORT_FOUND
 		server->yb_out_response_received++;
+#endif // YB_SUPPORT_FOUND
 		break;
 	case KIWI_BE_COPY_DONE:
 		/* should go after copy out
 		* states that backend copy ended
 		*/
+#ifndef YB_SUPPORT_FOUND
+		server->done_fail_response_received++;
+#else // YB_SUPPORT_FOUND
 		server->yb_done_fail_for_copy_out_response++;
+#endif // YB_SUPPORT_FOUND
 		break;
 	case KIWI_BE_COPY_FAIL:
 		/*
@@ -1175,7 +1183,7 @@ static od_frontend_status_t od_frontend_remote_server(od_relay_t *relay,
 
 	if (route->id.physical_rep || route->id.logical_rep) {
 		// do not detach server connection on replication
-		// the exceptional case in offine: ew are going to shut down here
+		// the exceptional case in offine: we are going to shut down here
 		if (server->offline) {
 			return OD_DETACH;
 		}
@@ -1483,6 +1491,9 @@ static od_frontend_status_t od_frontend_remote_client(od_relay_t *relay,
 	case KIWI_FE_COPY_DONE:
 	case KIWI_FE_COPY_FAIL:
 		/* client finished copy */
+#ifndef YB_SUPPORT_FOUND
+		server->done_fail_response_received++;
+#else // YB_SUPPORT_FOUND
 		server->yb_done_fail_for_copy_in_response++;
 		/*
 		 * YB: CopyDone/CopyFail packets work like Sync, as the
@@ -1491,6 +1502,7 @@ static od_frontend_status_t od_frontend_remote_client(od_relay_t *relay,
 		 * ReadyForQuery packet
 		 */
 		server->yb_has_unsynced_pending_packets = false;
+#endif // YB_SUPPORT_FOUND
 		break;
 	case KIWI_FE_QUERY:
 		if (instance->config.log_query || route->rule->log_query)
@@ -2284,6 +2296,13 @@ static void od_frontend_remote_client_on_read(od_relay_t *relay, int size)
 	od_stat_recv_client(stats, size);
 }
 
+/* 
+* machine_sleep with ODYSSEY_CATCHUP_RECHECK_INTERVAL value
+* will be effitiently just a context switch.
+*/
+
+#define ODYSSEY_CATCHUP_RECHECK_INTERVAL 1
+
 static inline od_frontend_status_t od_frontend_poll_catchup(od_client_t *client,
 							    od_route_t *route,
 							    uint32_t timeout)
@@ -2293,7 +2312,7 @@ static inline od_frontend_status_t od_frontend_poll_catchup(od_client_t *client,
 	od_dbg_printf_on_dvl_lvl(
 		1, "client %s polling replica for catchup with timeout %d\n",
 		client->id.id, timeout);
-	for (int checks = 0; checks < route->rule->catchup_checks; ++checks) {
+	for (int check = 1; check <= route->rule->catchup_checks; ++check) {
 		od_dbg_printf_on_dvl_lvl(1, "current cached time %d\n",
 					 machine_timeofday_sec());
 		int lag = machine_timeofday_sec() - route->last_heartbeat;
@@ -2307,11 +2326,13 @@ static inline od_frontend_status_t od_frontend_poll_catchup(od_client_t *client,
 			&instance->logger, "catchup", client, NULL,
 			"client %s replication %d lag is over catchup timeout %d\n",
 			client->id.id, lag, timeout);
-		od_frontend_info(
-			client,
-			"replication lag %d is over catchup timeout %d\n", lag,
-			timeout);
-		machine_sleep(1000);
+		/*
+		* TBD: Consider configuring `ODYSSEY_CATCHUP_RECHECK_INTERVAL` in 
+		* frontend rule.
+		*/
+		if (check < route->rule->catchup_checks) {
+			machine_sleep(ODYSSEY_CATCHUP_RECHECK_INTERVAL);
+		}
 	}
 	return OD_ECATCHUP_TIMEOUT;
 }
@@ -2356,6 +2377,49 @@ od_frontend_remote_process_server(od_server_t *server, od_client_t *client)
 	return OD_OK;
 }
 
+static od_frontend_status_t
+od_frontend_check_replica_catchup(od_instance_t *instance, od_client_t *client)
+{
+	od_route_t *route = client->route;
+
+	assert(route);
+
+	uint32_t catchup_timeout = route->rule->catchup_timeout;
+#ifndef YB_GUC_SUPPORT_VIA_SHMEM
+	/* YB: This is never expected to get a variable */
+	kiwi_var_t *timeout_var = yb_kiwi_vars_get(
+		&client->yb_vars_session,
+		"odyssey_catchup_timeout");
+#else
+	kiwi_var_t *timeout_var =
+		kiwi_vars_get(&client->vars, KIWI_VAR_ODYSSEY_CATCHUP_TIMEOUT);
+#endif
+	od_frontend_status_t status = OD_OK;
+
+	if (timeout_var != NULL) {
+		/* if there is catchup pgoption variable in startup packet */
+		char *end;
+		uint32_t user_catchup_timeout =
+			strtol(timeout_var->value, &end, 10);
+		if (end == timeout_var->value + timeout_var->value_len) {
+			// if where is no junk after number, thats ok
+			catchup_timeout = user_catchup_timeout;
+		} else {
+			od_error(&instance->logger, "catchup", client, NULL,
+				 "junk after catchup timeout, ignore value");
+		}
+	}
+
+	if (catchup_timeout) {
+		od_log(&instance->logger, "catchup", client, NULL,
+		       "checking for lag before doing any actual work");
+		status = od_frontend_poll_catchup(client, route,
+						  catchup_timeout);
+	}
+
+	return status;
+}
+
 static od_frontend_status_t od_frontend_remote(od_client_t *client)
 {
 	od_route_t *route = client->route;
@@ -2373,7 +2437,6 @@ static od_frontend_status_t od_frontend_remote(od_client_t *client)
 	if (rc == -1) {
 		return OD_ECLIENT_READ;
 	}
-
 	bool reserve_session_server_connection =
 		route->rule->reserve_session_server_connection;
 
@@ -2389,6 +2452,16 @@ static od_frontend_status_t od_frontend_remote(od_client_t *client)
 
 	od_server_t *server = NULL;
 	od_instance_t *instance = client->global->instance;
+
+	/* Consult lag polling logic and immudiately close connection with 
+	* error, if lag polling policy says so.
+	*/
+
+	od_frontend_status_t catchup_status =
+		od_frontend_check_replica_catchup(instance, client);
+	if (od_frontend_status_is_err(catchup_status)) {
+		return catchup_status;
+	}
 
 	for (;;) {
 		for (;;) {
@@ -2439,42 +2512,14 @@ static od_frontend_status_t od_frontend_remote(od_client_t *client)
 		/* attach */
 		status = od_relay_step(&client->relay);
 		if (status == OD_ATTACH) {
-			uint32_t catchup_timeout = route->rule->catchup_timeout;
-#ifndef YB_GUC_SUPPORT_VIA_SHMEM
-			/* YB: This is never expected to get a variable */
-			kiwi_var_t *timeout_var = yb_kiwi_vars_get(
-				&client->yb_vars_session,
-				"odyssey_catchup_timeout");
-#else
-			kiwi_var_t *timeout_var =
-				kiwi_vars_get(&client->vars,
-					      KIWI_VAR_ODYSSEY_CATCHUP_TIMEOUT);
-#endif
-
-			if (timeout_var != NULL) {
-				/* if there is catchup pgoption variable in startup packet */
-				char *end;
-				uint32_t user_catchup_timeout =
-					strtol(timeout_var->value, &end, 10);
-				if (end == timeout_var->value +
-						   timeout_var->value_len) {
-					// if where is no junk after number, thats ok
-					catchup_timeout = user_catchup_timeout;
-				} else {
-					od_error(
-						&instance->logger, "catchup",
-						client, NULL,
-						"junk after catchup timeout, ignore value");
-				}
-			}
-
-			if (catchup_timeout) {
-				status = od_frontend_poll_catchup(
-					client, route, catchup_timeout);
-			}
-
-			if (od_frontend_status_is_err(status))
+			/* Check for replication lag and reject query if too big */
+			od_frontend_status_t catchup_status =
+				od_frontend_check_replica_catchup(instance,
+								  client);
+			if (od_frontend_status_is_err(catchup_status)) {
+				status = catchup_status;
 				break;
+			}
 
 			assert(server == NULL);
 
@@ -2757,9 +2802,12 @@ static void od_frontend_cleanup(od_client_t *client, char *context,
 		od_log(&instance->logger, context, client, server,
 		       "replication lag is too big, failed to wait replica for catchup: status %s",
 		       od_frontend_status_to_str(status));
-		od_frontend_error(
+		od_frontend_fatal(
 			client, KIWI_CONNECTION_FAILURE,
 			"remote server read/write error: failed to wait replica for catchup");
+
+		/* no backend connection should be acquired to this client */
+		assert(client->server == NULL);
 		break;
 	case OD_ESERVER_READ:
 	case OD_ESERVER_WRITE:
@@ -3174,8 +3222,8 @@ void od_frontend(void *arg)
 				client->startup.database.value,
 				client->startup.user.value,
 				client->rule != NULL ?
-					client->rule->client_max :
-					-1);
+					      client->rule->client_max :
+					      -1);
 			break;
 		case OD_ROUTER_ERROR_REPLICATION:
 			od_error(

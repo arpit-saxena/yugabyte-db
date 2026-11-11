@@ -809,6 +809,52 @@ static inline int od_backend_startup(od_server_t *server,
 	od_instance_t *instance = server->global->instance;
 	od_route_t *route = server->route;
 
+#ifndef YB_SUPPORT_FOUND
+#define DEFAULT_ARGV_SIZE 6
+
+	kiwi_fe_arg_t argv[DEFAULT_ARGV_SIZE +
+			   2 * route->rule->backend_startup_vars_sz];
+
+	kiwi_fe_arg_t default_argv[] = {
+		{ "user", 5 },
+		{ route->id.user, route->id.user_len },
+		{ "database", 9 },
+		{ route->id.database, route->id.database_len },
+		{ "replication", 12 },
+		{ NULL, 0 }
+	};
+
+	for (size_t i = 0; i < route->rule->backend_startup_vars_sz; i++) {
+		argv[i << 1].name = route->rule->backend_startup_vars[i].name;
+		argv[i << 1].len =
+			route->rule->backend_startup_vars[i].name_len + 1;
+		argv[i << 1 | 1].name =
+			route->rule->backend_startup_vars[i].value;
+		argv[i << 1 | 1].len =
+			route->rule->backend_startup_vars[i].value_len + 1;
+	}
+
+	int argc = route->rule->backend_startup_vars_sz * 2;
+
+	for (size_t i = 0; i < DEFAULT_ARGV_SIZE; ++i) {
+		argv[argc + i] = default_argv[i];
+	}
+
+	argc += 4;
+
+	if (route->id.physical_rep) {
+		argv[argc + 1].name = "on";
+		argv[argc + 1].len = 3;
+		argc += 2;
+	} else if (route->id.logical_rep) {
+		argv[argc + 1].name = "database";
+		argv[argc + 1].len = 9;
+		argc += 2;
+	}
+
+	machine_msg_t *msg;
+	msg = kiwi_fe_write_startup_message(NULL, argc, argv);
+#else // YB_SUPPORT_FOUND
 	bool is_authenticating = client->yb_is_authenticating;
 	char db_name[64], user_name[64];
 	int db_name_len, user_name_len;
@@ -962,6 +1008,7 @@ static inline int od_backend_startup(od_server_t *server,
 		free(yb_client_cert);
 	if (yb_server_cert_hash != NULL)
 		free(yb_server_cert_hash);
+#endif // YB_SUPPORT_FOUND
 	if (msg == NULL)
 		return -1;
 	int rc;
@@ -1575,11 +1622,16 @@ int od_backend_connect(od_server_t *server, char *context,
 		return NOT_OK_RESPONSE;
 	case OD_TARGET_SESSION_ATTRS_ANY:
 	/* fall throught */
-	default:
+	default:;
 		/* use rr_counter here */
-		rc = od_backend_connect_to(server, context,
-					   storage->endpoints[0].host,
-					   storage->endpoints[0].port,
+		char *host = NULL; /* For UNIX socket */
+		int port = storage->port;
+		if (storage->endpoints_count) {
+			host = storage->endpoints[0].host;
+			if (storage->endpoints[0].port)
+				port = storage->endpoints[0].port;
+		}
+		rc = od_backend_connect_to(server, context, host, port,
 					   storage->tls_opts);
 		if (rc == NOT_OK_RESPONSE) {
 			return NOT_OK_RESPONSE;
@@ -1600,11 +1652,16 @@ int od_backend_connect_cancel(od_server_t *server, od_rule_storage_t *storage,
 	od_instance_t *instance = server->global->instance;
 	/* connect to server */
 	int rc;
-	rc = od_backend_connect_to(
-		server, "cancel",
-		storage->endpoints[server->endpoint_selector].host,
-		storage->endpoints[server->endpoint_selector].port,
-		storage->tls_opts);
+	char *host = NULL; /* For UNIX socket */
+	int port = storage->port;
+	if (storage->endpoints_count) {
+		host = storage->endpoints[server->endpoint_selector].host;
+		if (storage->endpoints[server->endpoint_selector].port)
+			port = storage->endpoints[server->endpoint_selector]
+				       .port;
+	}
+	rc = od_backend_connect_to(server, "cancel", host, port,
+				   storage->tls_opts);
 	if (rc == NOT_OK_RESPONSE) {
 		return NOT_OK_RESPONSE;
 	}
