@@ -305,7 +305,7 @@ static int calculate_client_proof(od_scram_state_t *scram_state,
 	od_scram_ctx_t *ctx = od_scram_HMAC_create();
 	const char *errstr = NULL;
 
-	od_scram_SaltedPassword(prepared_password, salt, strlen(salt),
+	od_scram_SaltedPassword(prepared_password, salt, SCRAM_DEFAULT_SALT_LEN,
 				iterations, scram_state->salted_password,
 				&errstr);
 
@@ -407,6 +407,7 @@ od_scram_create_client_final_message(od_scram_state_t *scram_state,
 	uint8_t client_proof[OD_SCRAM_MAX_KEY_LEN];
 	rc = calculate_client_proof(scram_state, password, salt, iterations,
 				    result, client_proof);
+	free(salt);
 	if (rc == -1)
 		goto error;
 

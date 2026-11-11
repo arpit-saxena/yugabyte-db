@@ -57,6 +57,7 @@ set(od_src
     hba_reader.c
     hba_rule.c
     mdb_iamproxy.c
+    group.c
     yb_auth_passthrough.c
     yb_oid_entry.c)
 

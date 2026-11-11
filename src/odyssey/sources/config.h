@@ -34,6 +34,7 @@ enum yb_od_alter_guc_adoption {
 struct od_config {
 	int daemonize;
 	int priority;
+	int sequential_routing;
 	/* logging */
 	int log_to_stdout;
 	/* YB: Use _Atomic types to support config reload */

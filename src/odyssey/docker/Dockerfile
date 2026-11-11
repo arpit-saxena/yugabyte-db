@@ -49,7 +49,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     vim \
     postgresql-common \
-    postgresql-server-dev-14
+    postgresql-server-dev-14 \
+    git
+
+RUN curl -fsSL https://get.docker.com -o get-docker.sh && \
+    sudo sh get-docker.sh
 
 COPY ./docker/pg/pg_hba-test.conf /etc/postgresql/14/main/pg_hba.conf
 
@@ -75,6 +79,10 @@ COPY ./docker/ldap /ldap
 COPY ./docker/lagpolling /lagpolling
 COPY ./docker/shell-test /shell-test
 COPY ./docker/tsa /tsa
+COPY ./docker/group /group
+COPY ./docker/xproto /xproto
+COPY ./docker/copy /copy
+COPY ./docker/gorm /gorm
 
 COPY ./docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 
