@@ -45,8 +45,10 @@ struct od_relay {
 	bool yb_paused;
 };
 
+#ifndef YB_SUPPORT_FOUND
 static inline od_frontend_status_t
 od_relay_read_pending_aware(od_relay_t *relay);
+#endif // YB_SUPPORT_FOUND
 static inline od_frontend_status_t od_relay_read(od_relay_t *relay);
 
 static inline void od_relay_init(od_relay_t *relay, od_io_t *io)
@@ -133,7 +135,11 @@ yb_od_relay_start_io(od_relay_t *relay, bool reserve_session_server_connection)
 	// to avoid attaching to a new server connection
 
 	if (machine_cond_try(relay->src->on_read)) {
+#ifndef YB_SUPPORT_FOUND
 		rc = od_relay_read_pending_aware(relay);
+#else // YB_SUPPORT_FOUND
+		rc = od_relay_read(relay);
+#endif // YB_SUPPORT_FOUND
 		if (rc != OD_OK)
 			return rc;
 		// signal machine condition immediately if we are not requested for pending data wait
@@ -430,6 +436,7 @@ static inline od_frontend_status_t od_relay_pipeline(od_relay_t *relay)
 	return OD_OK;
 }
 
+#ifndef YB_SUPPORT_FOUND
 /*
  * This is just like od_relay_read, but we must signal on read cond, when
  * there are pending bytes, otherwise it will be lost
@@ -448,6 +455,7 @@ od_relay_read_pending_aware(od_relay_t *relay)
 
 	return rc;
 }
+#endif // YB_SUPPORT_FOUND
 
 /*
  * This can lead to lost of relay->src->on_read in case of full readahead
@@ -458,6 +466,7 @@ static inline od_frontend_status_t od_relay_read(od_relay_t *relay)
 {
 	int to_read;
 	to_read = od_readahead_left(&relay->src->readahead);
+#ifndef YB_SUPPORT_FOUND
 	if (to_read == 0) {
 		if (machine_read_pending(relay->src->io)) {
 			/*
@@ -470,6 +479,10 @@ static inline od_frontend_status_t od_relay_read(od_relay_t *relay)
 		}
 		return OD_OK;
 	}
+#else // YB_SUPPORT_FOUND
+	if (to_read == 0)
+		return OD_OK;
+#endif // YB_SUPPORT_FOUND
 
 	char *pos;
 	pos = od_readahead_pos(&relay->src->readahead);
@@ -536,7 +549,11 @@ static inline od_frontend_status_t od_relay_step(od_relay_t *relay,
 			return OD_ATTACH;
 		}
 
+#ifndef YB_SUPPORT_FOUND
 		rc = od_relay_read_pending_aware(relay);
+#else // YB_SUPPORT_FOUND
+		rc = od_relay_read(relay);
+#endif // YB_SUPPORT_FOUND
 		if (rc != OD_OK)
 			return rc;
 
