@@ -16,12 +16,15 @@ if ("${CMAKE_BUILD_TYPE}" STREQUAL "")
     set(CMAKE_BUILD_TYPE "DEBUG")
 endif()
 
+# YB: Upper case build types; flags are appended to the YugabyteDB flags
 string(TOUPPER "${CMAKE_BUILD_TYPE}" CMAKE_BUILD_TYPE)
 
 if ("${CMAKE_BUILD_TYPE}" STREQUAL "RELEASE")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=${CLANGCOMPILERSTANDART} -fPIC -g -O2 -D_GNU_SOURCE -pthread -pedantic ")
 elseif("${CMAKE_BUILD_TYPE}" STREQUAL "DEBUG")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=${CLANGCOMPILERSTANDART} -fPIC -g -O0 -D_GNU_SOURCE -pthread -pedantic ")
+elseif("${CMAKE_BUILD_TYPE}" STREQUAL "ASAN")
+    set(CMAKE_C_FLAGS "-std=${CLANGCOMPILERSTANDART} -fPIC -g -O0 -D_GNU_SOURCE -pthread -pedantic -fsanitize=address,undefined,leak -fno-sanitize-recover=all")
 endif()
 
 include_directories("${PROJECT_SOURCE_DIR}/sources")

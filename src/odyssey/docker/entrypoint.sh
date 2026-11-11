@@ -2,9 +2,25 @@
 
 set -ex
 
-cd /test_dir/test && /usr/bin/odyssey_test
+/usr/bin/odyssey_test
+
+/usr/bin/odyssey /etc/odyssey/odyssey.conf
+sleep 5
+ody-stop
 
 setup
+
+/tls-compat/test-tls-compat.sh
+if [ $? -eq 1 ]
+then
+	exit 1
+fi
+
+/reload/test-reload.sh
+if [ $? -eq 1 ]
+then
+	exit 1
+fi
 
 # group
 /group/test_group.sh
@@ -104,12 +120,6 @@ then
 fi
 echo "" > /var/log/odyssey.log
 
-echo 0 > /proc/sys/kernel/randomize_va_space
-/usr/bin/odyssey-asan /etc/odyssey/odyssey.conf
-sleep 5
-ody-stop
-echo 2 > /proc/sys/kernel/randomize_va_space
-
 # TODO: rewrite
 #/shell-test/test.sh
 /shell-test/console_role_test.sh
@@ -121,5 +131,11 @@ ody-stop
 ody-start
 /ody_integration_test
 ody-stop
+
+/npgsql_compat/test_npgsql_compat.sh
+if [ $? -eq 1 ]
+then
+	exit 1
+fi
 
 teardown

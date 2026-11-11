@@ -1407,7 +1407,9 @@ static inline int od_backend_connect_to(od_server_t *server, char *context,
 	}
 
 	/* connect to server */
-	rc = machine_connect(server->io.io, saddr, UINT32_MAX);
+	rc = machine_connect(
+		server->io.io, saddr,
+		(uint32_t)instance->config.backend_connect_timeout_ms);
 	if (ai) {
 		freeaddrinfo(ai);
 	}

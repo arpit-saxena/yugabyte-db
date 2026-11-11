@@ -75,7 +75,11 @@ void od_config_testing(od_instance_t *instance)
 	od_error_init(&error);
 	od_router_init(&router, &global);
 	od_hba_init(&hba);
-	od_extensions_init(&extensions);
+	if (od_extensions_init(&extensions) != 0) {
+		od_error(&instance->logger, "config", NULL, NULL,
+			 "failed to init extensions");
+		goto error;
+	};
 
 	int rc;
 	rc = od_config_reader_import(&instance->config, &router.rules, &error,
@@ -197,6 +201,9 @@ int od_instance_main(od_instance_t *instance, int argc, char **argv)
 		return NOT_OK_RESPONSE;
 	}
 	instance->exec_path = strdup(argv[0]);
+	if (instance->exec_path == NULL) {
+		return NOT_OK_RESPONSE;
+	}
 	/* validate command line options */
 	int argindx; // index of first unparsed indx
 	if (argp_parse(&argp, argc, argv, 0, &argindx, &args) != OK_RESPONSE) {
@@ -242,7 +249,13 @@ int od_instance_main(od_instance_t *instance, int argc, char **argv)
 	}
 
 	od_worker_pool_init(&worker_pool);
-	od_extensions_init(&extensions);
+
+	if (od_extensions_init(&extensions) != 0) {
+		od_error(&instance->logger, "config", NULL, NULL,
+			 "failed to extensions init");
+		goto error;
+	}
+
 	od_hba_init(&hba);
 	od_global_init(&global, instance, &system, &router, &cron, &worker_pool,
 		       &extensions, &hba);

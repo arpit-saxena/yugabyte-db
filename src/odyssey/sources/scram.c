@@ -20,28 +20,29 @@ int od_scram_parse_verifier(od_scram_state_t *scram_state, char *verifier)
 	char *salt = NULL;
 	char *stored_key = NULL;
 	char *server_key = NULL;
+	char *strtok_preserve = NULL;
 
 	value = strdup(verifier);
 	if (value == NULL)
 		return -1;
 
-	scheme = strtok(value, "$");
+	scheme = strtok_r(value, "$", &strtok_preserve);
 	if (scheme == NULL)
 		goto error;
 
-	iterations_raw = strtok(NULL, ":");
+	iterations_raw = strtok_r(NULL, ":", &strtok_preserve);
 	if (iterations_raw == NULL)
 		goto error;
 
-	salt_raw = strtok(NULL, "$");
+	salt_raw = strtok_r(NULL, "$", &strtok_preserve);
 	if (salt_raw == NULL)
 		goto error;
 
-	stored_key_raw = strtok(NULL, ":");
+	stored_key_raw = strtok_r(NULL, ":", &strtok_preserve);
 	if (stored_key_raw == NULL)
 		goto error;
 
-	server_key_raw = strtok(NULL, "");
+	server_key_raw = strtok_r(NULL, "", &strtok_preserve);
 	if (server_key_raw == NULL)
 		goto error;
 
@@ -144,6 +145,8 @@ int od_scram_init_from_plain_password(od_scram_state_t *scram_state,
 					    scram_state->salt, salt_dst_len);
 	scram_state->salt[base64_salt_len] = '\0';
 	const char *errstr = NULL;
+	/* usage exists depending of pg version */
+	(void)errstr;
 
 	uint8_t salted_password[OD_SCRAM_MAX_KEY_LEN];
 	od_scram_SaltedPassword(password, salt, sizeof(salt),
@@ -304,6 +307,8 @@ static int calculate_client_proof(od_scram_state_t *scram_state,
 
 	od_scram_ctx_t *ctx = od_scram_HMAC_create();
 	const char *errstr = NULL;
+	/* usage exists depending of pg version */
+	(void)errstr;
 
 	od_scram_SaltedPassword(prepared_password, salt, SCRAM_DEFAULT_SALT_LEN,
 				iterations, scram_state->salted_password,
@@ -487,6 +492,9 @@ od_retcode_t od_scram_verify_server_signature(od_scram_state_t *scram_state,
 	od_scram_ctx_t *ctx = od_scram_HMAC_create();
 
 	const char *errstr = NULL;
+	/* usage exists depending of pg version */
+	(void)errstr;
+
 	uint8_t server_key[OD_SCRAM_MAX_KEY_LEN];
 	od_scram_ServerKey(scram_state->salted_password, server_key, &errstr);
 	od_scram_HMAC_init(ctx, server_key, OD_SCRAM_MAX_KEY_LEN);
@@ -606,6 +614,32 @@ error:
 	return -1;
 }
 
+static inline int
+od_scram_need_channel_binding_check(const char *channel_binding,
+				    size_t channel_binding_size)
+{
+	/*
+		See pg's backend/libpq/auth-scram.c
+
+		We need to perform channel binding check only if
+		channel_binding is not equal to "biws" (=n,,) or "eSws" (=y,,)
+
+		TODO: this is not totaly correct, maybe its better to get channel binding
+		flag from client's first message?
+	 */
+
+	if (channel_binding_size != 4) {
+		return 1;
+	}
+
+	if (memcmp(channel_binding, "biws", channel_binding_size) == 0 ||
+	    memcmp(channel_binding, "eSws", channel_binding_size) == 0) {
+		return 0;
+	}
+
+	return 1;
+}
+
 int od_scram_read_client_final_message(machine_io_t *io,
 				       od_scram_state_t *scram_state,
 				       char *auth_data, size_t auth_data_size,
@@ -637,9 +671,14 @@ int od_scram_read_client_final_message(machine_io_t *io,
 			       &channel_binding, &channel_binding_size))
 		goto error;
 
-	if (channel_binding_size != 4 ||
-	    memcmp(channel_binding, "biws", channel_binding_size) != 0) {
+	if (od_scram_need_channel_binding_check(channel_binding,
+						channel_binding_size)) {
 		/*channel binding check*/
+
+		/* need cert to perform check */
+		if (!machine_io_is_tls(io)) {
+			goto error;
+		}
 
 		/* Fetch hash data of server's SSL certificate */
 		scram_rc = machine_tls_cert_hash(
@@ -837,6 +876,8 @@ od_retcode_t od_scram_verify_client_proof(od_scram_state_t *scram_state,
 
 	od_scram_ctx_t *ctx = od_scram_HMAC_create();
 	const char *errstr = NULL;
+	/* usage exists depending of pg version */
+	(void)errstr;
 
 	od_scram_HMAC_init(ctx, scram_state->stored_key, OD_SCRAM_MAX_KEY_LEN);
 	od_scram_HMAC_update(ctx, scram_state->client_first_message,

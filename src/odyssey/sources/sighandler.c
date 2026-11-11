@@ -132,10 +132,10 @@ od_attribute_noreturn() void od_system_shutdown(od_system_t *system,
 						      (uint32_t)delay_ms);
 	}
 
+	od_extension_free(&instance->logger, system->global->extensions);
+
 #ifdef OD_SYSTEM_SHUTDOWN_CLEANUP
 	od_router_free(system->global->router);
-
-	od_extension_free(&instance->logger, system->global->extensions);
 
 	od_system_cleanup(system);
 

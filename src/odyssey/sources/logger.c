@@ -617,6 +617,7 @@ void od_logger_write(od_logger_t *logger, od_logger_level_t level,
 		_od_log_entry *le = machine_msg_data(msg);
 		strncpy(le->msg, output, len);
 		le->msg[len] = '\0';
+		le->lvl = level;
 
 		machine_channel_write(logger->task_channel, msg);
 	} else {
@@ -662,8 +663,15 @@ extern void od_logger_write_plain(od_logger_t *logger, od_logger_level_t level,
 
 	int len = strlen(string);
 	char output[len + OD_LOGLINE_MAXLEN];
+#ifndef YB_SUPPORT_FOUND
+	va_list empty_va_list = { 0 };
+	len = od_logger_format(logger, level, context, client, server, string,
+			       empty_va_list, output, len + 100);
+#else // YB_SUPPORT_FOUND
+	/* YB */
 	len = yb_od_logger_formatf(logger, level, context, client, server,
 				   output, len + 100, "%s", string);
+#endif // YB_SUPPORT_FOUND
 
 	if (logger->loaded) {
 		/* create new log event and pass it to logger pool */
@@ -674,6 +682,7 @@ extern void od_logger_write_plain(od_logger_t *logger, od_logger_level_t level,
 		_od_log_entry *le = machine_msg_data(msg);
 		strncpy(le->msg, output, len);
 		le->msg[len] = '\0';
+		le->lvl = level;
 
 		machine_channel_write(logger->task_channel, msg);
 	} else {

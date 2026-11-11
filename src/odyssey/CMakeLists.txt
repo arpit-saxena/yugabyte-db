@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.16)
 
 project(odyssey C)
 
@@ -11,11 +11,10 @@ set(CLANGCOMPILERSTANDART gnu11)
 
 set(OD_VERSION_GIT $ENV{VERSION})
 if ("${OD_VERSION_GIT}" STREQUAL "")
-    execute_process(COMMAND git describe --always
+    execute_process(COMMAND git rev-parse --short HEAD
                     OUTPUT_VARIABLE OD_VERSION_GIT
                     RESULT_VARIABLE OD_VERSION_GIT_RESULT
-                    OUTPUT_STRIP_TRAILING_WHITESPACE
-                    ERROR_QUIET)
+                    OUTPUT_STRIP_TRAILING_WHITESPACE)
 
     if(NOT "${OD_VERSION_GIT_RESULT}" STREQUAL "0")
         add_definitions(-DOD_VERSION_GIT="unknown")
@@ -28,12 +27,10 @@ endif()
 
 set(OD_VERSION_NUMBER $ENV{BUILD_NUMBER})
 if ("${OD_VERSION_NUMBER}" STREQUAL "")
-
     execute_process(COMMAND git rev-list --count HEAD
                     OUTPUT_VARIABLE OD_VERSION_NUMBER
                     RESULT_VARIABLE OD_VERSION_NUMBER_RESULT
-                    OUTPUT_STRIP_TRAILING_WHITESPACE
-                    ERROR_QUIET)
+                    OUTPUT_STRIP_TRAILING_WHITESPACE)
 
     if(NOT "${OD_VERSION_NUMBER_RESULT}" STREQUAL "0")
         add_definitions(-DOD_VERSION_NUMBER="unknown")
@@ -43,12 +40,14 @@ if ("${OD_VERSION_NUMBER}" STREQUAL "")
 else()
     add_definitions(-DOD_VERSION_NUMBER="${OD_VERSION_NUMBER}")
 endif()
+set(OD_VERSION_NUMBER "1.4rc-${OD_VERSION_NUMBER}")
+
+set(OD_VERSION "${OD_VERSION_NUMBER}-${OD_VERSION_GIT}")
 
 execute_process(COMMAND ${CMAKE_C_COMPILER} --version
         OUTPUT_VARIABLE OD_COMPILER_VERSION
         RESULT_VARIABLE OD_COMPILER_VERSION_RESULT
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        ERROR_QUIET)
+        OUTPUT_STRIP_TRAILING_WHITESPACE)
 
 
 set(OD_DEVEL_LVL -1)
@@ -57,17 +56,18 @@ if ("${CMAKE_BUILD_TYPE}" STREQUAL "")
         set(CMAKE_BUILD_TYPE "DEBUG")
         set(OD_DEVEL_LVL 1)
 endif()
+# YB: Upper case build types; flags are appended to the YugabyteDB flags
 string(TOUPPER "${CMAKE_BUILD_TYPE}" CMAKE_BUILD_TYPE)
 if ("${CMAKE_BUILD_TYPE}" STREQUAL "RELEASE")
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=${CLANGCOMPILERSTANDART} -pedantic -Wall -Wextra -Wstrict-aliasing -g -O2 -pthread -D_GNU_SOURCE")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=${CLANGCOMPILERSTANDART} -pedantic -Wall -Wextra -Werror -Wstrict-aliasing -g -O2 -pthread -D_GNU_SOURCE")
         set(OD_DEVEL_LVL -1)
 elseif("${CMAKE_BUILD_TYPE}" STREQUAL "DEBUG")
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=${CLANGCOMPILERSTANDART} -pedantic -Wall -Wextra -Wstrict-aliasing -g -O0 -pthread -D_GNU_SOURCE -DLDAP_DBG")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=${CLANGCOMPILERSTANDART} -pedantic -Wall -Wextra -Werror -Wstrict-aliasing -g -O0 -pthread -D_GNU_SOURCE -DLDAP_DBG")
         set(OD_DEVEL_LVL 1)
 elseif("${CMAKE_BUILD_TYPE}" STREQUAL "ASAN")
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=${CLANGCOMPILERSTANDART} -g -fsanitize=address,undefined -fno-sanitize-recover=all -pedantic -Wall -Wextra -Wstrict-aliasing -g -O0 -pthread -D_GNU_SOURCE")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=${CLANGCOMPILERSTANDART} -g -fsanitize=address,undefined,leak -fno-sanitize-recover=all -fno-omit-frame-pointer -pedantic -Werror -Wall -Wextra -Wstrict-aliasing -g -O0 -pthread -D_GNU_SOURCE")
 elseif("${CMAKE_BUILD_TYPE}" STREQUAL "TSAN")
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=${CLANGCOMPILERSTANDART} -g -fsanitize=thread -fno-sanitize-recover=all -pedantic -Wall -Wextra -Wstrict-aliasing -g -O0 -pthread -D_GNU_SOURCE")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=${CLANGCOMPILERSTANDART} -g -fsanitize=thread -fno-sanitize-recover=all -fno-omit-frame-pointer -pedantic -Wall -Werror -Wextra -Wstrict-aliasing -g -O0 -pthread -D_GNU_SOURCE")
 endif()
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${CC_FLAGS}")
@@ -85,12 +85,6 @@ set(od_libraries "rt")
 
 # YB: Add YugabyteDB utility libraries for tcmalloc profiling and other utilities
 list(APPEND od_libraries "yb_util")
-
-# debian build
-option(BUILD_DEBIAN "Enable Debian Build" OFF)
-if (BUILD_DEBIAN)
-    include(BuildDebian)
-endif()
 
 # postgresql
 if("${POSTGRESQL_LIBRARY}" STREQUAL "")
@@ -211,8 +205,7 @@ include_directories(${KIWI_INCLUDE_DIRS})
 message(STATUS "")
 message(STATUS "Odyssey (version: ${OD_VERSION_NUMBER}-${OD_VERSION_GIT}-${OD_VERSION_BUILD})")
 message(STATUS "")
-message(STATUS "using compiler:         ${CMAKE_C_COMPILER} version
-${OD_COMPILER_VERSION}")
+message(STATUS "using compiler:         ${CMAKE_C_COMPILER} version ${OD_COMPILER_VERSION}")
 message(STATUS "c lang standard:        ${CLANGCOMPILERSTANDARD}")
 message(STATUS "                                                                          ")
 message(STATUS "CMAKE_BUILD_TYPE:       ${CMAKE_BUILD_TYPE}")
@@ -235,9 +228,7 @@ if (PAM_FOUND)
     message(STATUS "PAM_INCLUDE_DIR:        ${PAM_INCLUDE_DIR}")
 endif()
 
-
 message(STATUS "USE_SCRAM:              ${USE_SCRAM}")
-
 
 message(STATUS "BUILD_COMPRESSION:      ${BUILD_COMPRESSION}")
 if (BUILD_COMPRESSION)
@@ -256,3 +247,12 @@ endif()
 add_subdirectory(sources)
 add_subdirectory(test)
 add_subdirectory(stress)
+
+# YB: Odyssey is not installed or packaged on its own in the YugabyteDB build
+if(NOT YB_BUILD_ODYSSEY)
+set(OD_INSTALL_PREFIX "/usr/bin/")
+
+install(TARGETS odyssey DESTINATION "${OD_INSTALL_PREFIX}")
+
+include(Packaging)
+endif()

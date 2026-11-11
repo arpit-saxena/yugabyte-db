@@ -702,7 +702,7 @@ od_router_status_t od_router_route(od_router_t *router, od_client_t *client)
 		ldap_server =
 			od_ldap_server_pull(&instance->logger, rule, false);
 		if (ldap_server == NULL) {
-			od_debug(&instance->logger, "routing", client, NULL,
+			od_error(&instance->logger, "routing", client, NULL,
 				 "failed to get ldap connection");
 			od_router_unlock(router);
 			return OD_ROUTER_ERROR_NOT_FOUND;
@@ -712,10 +712,15 @@ od_router_status_t od_router_route(od_router_t *router, od_client_t *client)
 		switch (ldap_rc) {
 		case OK_RESPONSE: {
 			od_ldap_endpoint_lock(rule->ldap_endpoint);
-			ldap_server->idle_timestamp = time(NULL);
+			ldap_server->idle_timestamp = (int)time(NULL);
+#if USE_POOL
 			od_ldap_server_pool_set(
 				rule->ldap_endpoint->ldap_search_pool,
 				ldap_server, OD_SERVER_IDLE);
+#else
+			od_ldap_server_free(ldap_server);
+#endif
+
 			od_ldap_endpoint_unlock(rule->ldap_endpoint);
 
 			/* invalid after switching to OID based pool design */
@@ -736,10 +741,15 @@ od_router_status_t od_router_route(od_router_t *router, od_client_t *client)
 		}
 		case LDAP_INSUFFICIENT_ACCESS: {
 			od_ldap_endpoint_lock(rule->ldap_endpoint);
-			ldap_server->idle_timestamp = time(NULL);
+			ldap_server->idle_timestamp = (int)time(NULL);
+#if USE_POOL
 			od_ldap_server_pool_set(
 				rule->ldap_endpoint->ldap_search_pool,
 				ldap_server, OD_SERVER_IDLE);
+#else
+			od_ldap_server_free(ldap_server);
+#endif
+
 			od_ldap_endpoint_unlock(rule->ldap_endpoint);
 			od_router_unlock(router);
 			return OD_ROUTER_INSUFFICIENT_ACCESS;
@@ -748,9 +758,11 @@ od_router_status_t od_router_route(od_router_t *router, od_client_t *client)
 			od_debug(&instance->logger, "routing", client, NULL,
 				 "closing bad ldap connection, need relogin");
 			od_ldap_endpoint_lock(rule->ldap_endpoint);
+#if USE_POOl
 			od_ldap_server_pool_set(
 				rule->ldap_endpoint->ldap_search_pool,
 				ldap_server, OD_SERVER_UNDEF);
+#endif
 			od_ldap_endpoint_unlock(rule->ldap_endpoint);
 			od_ldap_server_free(ldap_server);
 			od_router_unlock(router);
@@ -1340,9 +1352,11 @@ od_router_status_t od_router_attach(od_router_t *router,
 			       (bool)od_io_read_active(&external_client->io);
 		od_route_unlock(route);
 
+		/* YB */
 		int rc = od_io_read_stop(&external_client->io);
-		if (rc == -1)
+		if (rc == -1) {
 			return OD_ROUTER_ERROR;
+		}
 
 		/*
 		 * Wait wakeup condition for pool_timeout milliseconds.
@@ -1354,8 +1368,9 @@ od_router_status_t od_router_attach(od_router_t *router,
 		if (timeout == 0)
 			timeout = UINT32_MAX;
 		rc = od_route_wait(route, timeout);
-		if (rc == -1)
+		if (rc == -1) {
 			return OD_ROUTER_ERROR_TIMEDOUT;
+		}
 
 		od_route_lock(route);
 	}

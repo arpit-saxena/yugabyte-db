@@ -98,6 +98,9 @@ MACHINE_API int machine_signal_wait(uint32_t time_ms);
 
 MACHINE_API int64_t machine_coroutine_create(machine_coroutine_t, void *arg);
 
+MACHINE_API int64_t machine_coroutine_create_named(machine_coroutine_t, void *,
+						   const char *);
+
 MACHINE_API void machine_sleep(uint32_t time_ms);
 
 MACHINE_API int machine_join(uint64_t coroutine_id);
@@ -109,6 +112,8 @@ MACHINE_API int machine_cancelled(void);
 MACHINE_API int machine_timedout(void);
 
 MACHINE_API int machine_errno(void);
+
+MACHINE_API const char *machine_coroutine_get_name(uint64_t coroutine_id);
 
 /* condition */
 
@@ -231,6 +236,7 @@ MACHINE_API int machine_advice_keepalive_usr_timeout(int delay, int interval,
 						     int probes);
 
 MACHINE_API int machine_set_tls(machine_io_t *, machine_tls_t *, uint32_t);
+MACHINE_API int machine_io_is_tls(machine_io_t *);
 MACHINE_API int machine_set_compression(machine_io_t *, char algorithm);
 
 MACHINE_API int machine_io_verify(machine_io_t *, char *common_name);
@@ -318,6 +324,14 @@ MACHINE_API int machine_write(machine_io_t *, machine_msg_t *,
 
 /* lrand48 */
 MACHINE_API long int machine_lrand48(void);
+
+/* stat/debug */
+
+MACHINE_API int machine_io_sysfd(machine_io_t *);
+
+MACHINE_API int machine_io_mask(machine_io_t *);
+
+MACHINE_API int machine_io_mm_fd(machine_io_t *);
 
 /* tls cert hash */
 

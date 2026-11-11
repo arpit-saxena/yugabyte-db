@@ -1,8 +1,6 @@
 BUILD_TEST_DIR=build
 BUILD_REL_DIR=build
-BUILD_TEST_ASAN_DIR=build-asan
-ODY_DIR=$(PWD)
-TMP_BIN:=$(ODY_DIR)/tmp
+BUILD_TEST_ASAN_DIR=build
 
 FMT_BIN:=clang-format-18
 CMAKE_BIN:=cmake
@@ -26,7 +24,7 @@ endif
 .PHONY: clean apply_fmt
 
 clean:
-	rm -fr $(TMP_BIN)
+	rm -fr $(BUILD_REL_DIR)
 	rm -fr $(BUILD_TEST_DIR)
 	rm -fr $(BUILD_TEST_ASAN_DIR)
 
@@ -40,7 +38,7 @@ local_run:
 console_run: 
 	$(BUILD_TEST_DIR)/sources/odyssey $(DEV_CONF) --verbose --console --log_to_stdout
 
-fmt:
+check-format:
 	docker build -f docker/format/Dockerfile --tag=odyssey/clang-format-runner .
 	docker run -v .:/odyssey:ro odyssey/clang-format-runner modules sources stress test third_party
 
@@ -48,60 +46,63 @@ format:
 	docker build -f docker/format/Dockerfile --tag=odyssey/clang-format-runner .
 	docker run --user=`stat -c "%u:%g" .` -v .:/odyssey:rw odyssey/clang-format-runner -i modules sources stress test third_party
 
-apply_fmt:
-	for d in sources test third_party stress modules ; do \
-		find $$d -maxdepth 5 -iname '*.h' -o -iname '*.c'  | xargs -n 1 -t -P $(CONCURRENCY) $(FMT_BIN) -i ; \
-	done
-
-build_asan: clean
+build_asan:
+	rm -rf $(BUILD_TEST_ASAN_DIR)
 	mkdir -p $(BUILD_TEST_ASAN_DIR)
-	cd $(BUILD_TEST_ASAN_DIR) && $(CMAKE_BIN) -DCMAKE_BUILD_TYPE=ASAN $(ODY_DIR) && make -j$(CONCURRENCY)
+	cd $(BUILD_TEST_ASAN_DIR) && $(CMAKE_BIN) .. -DCMAKE_BUILD_TYPE=ASAN $(CMAKE_FLAGS) && make -j$(CONCURRENCY)
 
-copy_asan_bin:
-	cp $(BUILD_TEST_ASAN_DIR)/sources/odyssey ./docker/bin/odyssey-asan
-
-build_release: clean
+build_release:
+	rm -rf $(BUILD_REL_DIR)
 	mkdir -p $(BUILD_REL_DIR)
-	cd $(BUILD_REL_DIR) && $(CMAKE_BIN) -DCMAKE_BUILD_TYPE=Release $(ODY_DIR) $(CMAKE_FLAGS) && make -j$(CONCURRENCY)
+	cd $(BUILD_REL_DIR) && $(CMAKE_BIN) .. -DCMAKE_BUILD_TYPE=Release $(CMAKE_FLAGS) && make -j$(CONCURRENCY)
 
-copy_release_bin:
-	cp $(BUILD_TEST_DIR)/sources/odyssey ./docker/bin/
-
-copy_test_bin:
-	cp $(BUILD_TEST_DIR)/test/odyssey_test ./docker/bin/
-
-build_dbg: clean
+build_dbg:
+	rm -rf $(BUILD_TEST_DIR)
 	mkdir -p $(BUILD_TEST_DIR)
-	cd $(BUILD_TEST_DIR) && $(CMAKE_BIN) -DCMAKE_BUILD_TYPE=Debug -DUSE_SCRAM=YES $(ODY_DIR) && make -j$(CONCURRENCY)
+	cd $(BUILD_TEST_DIR) && $(CMAKE_BIN) .. -DCMAKE_BUILD_TYPE=Debug -DUSE_SCRAM=YES && make -j$(CONCURRENCY)
 
 gdb: build_dbg
 	gdb --args ./build/sources/odyssey $(DEV_CONF)  --verbose --console --log_to_stdout
 
-copy_dbg_bin:
-	cp $(BUILD_TEST_DIR)/sources/odyssey ./docker/bin/odyssey-dbg
-
-run_test_prep: build_asan copy_asan_bin build_dbg copy_dbg_bin build_release copy_release_bin copy_test_bin
-
 run_test:
 	# change dir, test would not work with absolute path
 	./cleanup-docker.sh
-	docker compose -f ./docker-compose-test.yml up --exit-code-from odyssey
+	ODYSSEY_TEST_BUILD_TYPE=build_release docker compose -f ./docker-compose-test.yml up --exit-code-from odyssey
+
+run_test_asan:
+	./cleanup-docker.sh
+	ODYSSEY_TEST_BUILD_TYPE=build_asan docker compose -f ./docker-compose-test.yml up --exit-code-from odyssey
+
+run_test_dbg:
+	./cleanup-docker.sh
+	ODYSSEY_TEST_BUILD_TYPE=build_dbg docker compose -f ./docker-compose-test.yml up --exit-code-from odyssey
 
 submit-cov:
 	mkdir cov-build && cd cov-build
 	$(COV-BIN-PATH)/cov-build --dir cov-int make -j 4 && tar czvf odyssey.tgz cov-int && curl --form token=$(COV_TOKEN) --form email=$(COV_ISSUER) --form file=@./odyssey.tgz --form version="2" --form description="scalable potgresql connection pooler"  https://scan.coverity.com/builds\?project\=yandex%2Fodyssey
 
+cpack-deb: build_release
+	cd $(BUILD_REL_DIR) && cpack -G DEB
 
-BUILD_VERSION:=
-BUILD_NUM:=
+cpack-deb-debug: build_dbg
+	cd $(BUILD_REL_DIR) && cpack -G DEB
 
-build-docker-pkg:
-	docker build -f ./docker/dpkg/Dockerfile . --tag odybuild:1.0 && docker run -e VERSION=$(BUILD_VERSION) -e BUILD_NUMBER=$(BUILD_NUM) odybuild:1.0
+cpack-rpm: build_release
+	cd $(BUILD_REL_DIR) && cpack -G RPM
 
-prefix = /usr/local
+cpack-rpm-debug: build_dbg
+	cd $(BUILD_REL_DIR) && cpack -G RPM
+
+package-bionic:
+	mkdir -p build
+	./docker/dpkg/runner.sh -c bionic -o build
+
+package-jammy:
+	mkdir -p build
+	./docker/dpkg/runner.sh -c jammy -o build
 
 install:
-	install -D build/sources/odyssey  $(DESTDIR)$(prefix)/bin/odyssey
+	install -D build/sources/odyssey $(DESTDIR)/usr/bin/odyssey
 
 start-dev-env:
 	docker compose build dev

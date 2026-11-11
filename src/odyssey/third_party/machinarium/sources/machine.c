@@ -28,7 +28,7 @@ static inline void machine_free(mm_machine_t *machine)
 	mm_coroutine_cache_free(&machine->coroutine_cache);
 	mm_eventmgr_free(&machine->event_mgr, &machine->loop);
 	mm_signalmgr_free(&machine->signal_mgr, &machine->loop);
-	// mm_loop_shutdown(&machine->loop);
+	mm_loop_shutdown(&machine->loop);
 	mm_scheduler_free(&machine->scheduler);
 }
 
@@ -122,6 +122,7 @@ MACHINE_API int64_t machine_create(char *name, machine_coroutine_t function,
 		return -1;
 	}
 	mm_machinemgr_add(&machinarium.machine_mgr, machine);
+	/* YB */
 	rc = mm_thread_create(&machine->thread, YB_MIN_THREAD_STACK_BYTES, machine_main,
 			      machine);
 	if (rc == -1) {
@@ -183,17 +184,43 @@ MACHINE_API void machine_stop_current(void)
 	atomic_store(&mm_self->online, 0);
 }
 
-MACHINE_API int64_t machine_coroutine_create(machine_coroutine_t function,
-					     void *arg)
+static inline mm_coroutine_t *
+mm_coroutine_create_internal(machine_coroutine_t function, void *arg)
 {
 	mm_errno_set(0);
 	mm_coroutine_t *coroutine;
 	coroutine = mm_coroutine_cache_pop(&mm_self->coroutine_cache);
 	if (coroutine == NULL) {
 		mm_errno_set(ENOMEM);
-		return -1;
+		return NULL;
 	}
 	mm_scheduler_new(&mm_self->scheduler, coroutine, function, arg);
+	return coroutine;
+}
+
+MACHINE_API int64_t machine_coroutine_create(machine_coroutine_t function,
+					     void *arg)
+{
+	mm_coroutine_t *coroutine;
+	coroutine = mm_coroutine_create_internal(function, arg);
+	if (coroutine == NULL) {
+		return -1;
+	}
+
+	return coroutine->id;
+}
+
+MACHINE_API int64_t machine_coroutine_create_named(machine_coroutine_t function,
+						   void *arg, const char *name)
+{
+	mm_coroutine_t *coroutine;
+	coroutine = mm_coroutine_create_internal(function, arg);
+	if (coroutine == NULL) {
+		return -1;
+	}
+
+	mm_coroutine_set_name(coroutine, name);
+
 	return coroutine->id;
 }
 
@@ -231,6 +258,19 @@ MACHINE_API int machine_cancel(uint64_t coroutine_id)
 	}
 	mm_coroutine_cancel(coroutine);
 	return 0;
+}
+
+MACHINE_API const char *machine_coroutine_get_name(uint64_t coroutine_id)
+{
+	mm_errno_set(0);
+	mm_coroutine_t *coroutine;
+	coroutine = mm_scheduler_find(&mm_self->scheduler, coroutine_id);
+	if (coroutine == NULL) {
+		mm_errno_set(ENOENT);
+		return NULL;
+	}
+
+	return mm_coroutine_get_name(coroutine);
 }
 
 MACHINE_API int machine_cancelled(void)

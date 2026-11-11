@@ -7,6 +7,10 @@
  * Scalable PostgreSQL connection pooler.
  */
 
+#ifdef LDAP_FOUND
+#define LDAP_MIN_COROUTINE_STACK_SIZE 16
+#endif
+
 typedef struct od_config_listen od_config_listen_t;
 typedef struct od_config od_config_t;
 
@@ -90,6 +94,8 @@ struct od_config {
 	// Soft interval between group checks
 	int group_checker_interval;
 	od_list_t listen;
+
+	int backend_connect_timeout_ms;
 
 	/* YB */
 	int yb_ysql_max_connections;

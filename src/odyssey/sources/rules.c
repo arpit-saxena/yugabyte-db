@@ -551,7 +551,7 @@ void od_rules_rule_free(od_rule_t *rule)
 		free(rule->ldap_storage_credentials_attr);
 	if (rule->ldap_endpoint)
 		od_ldap_endpoint_free(rule->ldap_endpoint);
-	if (&rule->ldap_storage_creds_list) {
+	if (!od_list_empty(&rule->ldap_storage_creds_list)) {
 		od_list_foreach_safe(&rule->ldap_storage_creds_list, i, n)
 		{
 			od_ldap_storage_credentials_t *lsc;
@@ -1337,6 +1337,8 @@ int od_rules_autogenerate_defaults(od_rules_t *rules, od_logger_t *logger)
 
 	if (!need_autogen || od_rules_match(rules, "default_db", "default_user",
 					    &default_address_range, 1, 1, 1)) {
+		od_log(logger, "config", NULL, NULL,
+		       "skipping default internal rule auto-generation: no need in them");
 		return OK_RESPONSE;
 	}
 
@@ -1648,6 +1650,48 @@ int od_rules_validate(od_rules_t *rules, od_config_t *config,
 				return -1;
 			}
 		}
+
+		/* group */
+		if (rule->group) {
+			if (rule->group->group_query == NULL) {
+				od_error(
+					logger, "rules", NULL, NULL,
+					"rule '%s.%s %s': group_query is not set",
+					rule->db_name, rule->user_name,
+					rule->address_range.string_value);
+				return -1;
+			}
+			if (rule->group->group_query_user == NULL) {
+				od_error(
+					logger, "rules", NULL, NULL,
+					"rule '%s.%s %s': group_query_user is not set",
+					rule->db_name, rule->user_name,
+					rule->address_range.string_value);
+				return -1;
+			}
+			if (rule->group->group_query_db == NULL) {
+				od_error(
+					logger, "rules", NULL, NULL,
+					"rule '%s.%s %s': group_query_db is not set",
+					rule->db_name, rule->user_name,
+					rule->address_range.string_value);
+				return -1;
+			}
+		}
+
+#ifdef LDAP_FOUND
+		if (rule->ldap_endpoint != NULL &&
+		    config->coroutine_stack_size <
+			    LDAP_MIN_COROUTINE_STACK_SIZE) {
+			od_error(
+				logger, "rules", NULL, NULL,
+				"rule '%s.%s %s' use ldap_endpoint. coroutine_stack_size must be >= %d",
+				rule->db_name, rule->user_name,
+				rule->address_range.string_value,
+				LDAP_MIN_COROUTINE_STACK_SIZE);
+			return -1;
+		}
+#endif
 	}
 
 	return 0;
@@ -1842,7 +1886,7 @@ void od_rules_print(od_rules_t *rules, od_logger_t *logger)
 			       "  ldap_storage_credentials_attr     %s",
 			       rule->ldap_storage_credentials_attr);
 		}
-		if (&rule->ldap_storage_creds_list) {
+		if (!od_list_empty(&rule->ldap_storage_creds_list)) {
 			od_list_t *f;
 			od_list_foreach(&rule->ldap_storage_creds_list, f)
 			{

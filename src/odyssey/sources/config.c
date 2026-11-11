@@ -76,6 +76,8 @@ void od_config_init(od_config_t *config)
 	config->yb_data_directory = NULL;
 
 	od_list_init(&config->listen);
+
+	config->backend_connect_timeout_ms = 30U * 1000U; // 30 seconds
 }
 
 void od_config_reload(od_config_t *current_config, od_config_t *new_config)
@@ -85,6 +87,8 @@ void od_config_reload(od_config_t *current_config, od_config_t *new_config)
 	current_config->client_max = new_config->client_max;
 	current_config->client_max_routing = new_config->client_max_routing;
 	current_config->server_login_retry = new_config->server_login_retry;
+	current_config->backend_connect_timeout_ms =
+		new_config->backend_connect_timeout_ms;
 
 	/* YB: Update log flags on config reload as well */
 	current_config->log_debug = new_config->log_debug;
@@ -367,6 +371,8 @@ void od_config_print(od_config_t *config, od_logger_t *logger)
 	       config->workers);
 	od_log(logger, "config", NULL, NULL, "resolvers               %d",
 	       config->resolvers);
+	od_log(logger, "config", NULL, NULL, "backend_connect_timeout_ms %u",
+	       config->backend_connect_timeout_ms);
 
 	if (config->enable_online_restart_feature) {
 		od_log(logger, "config", NULL, NULL,
