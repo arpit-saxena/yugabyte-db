@@ -36,9 +36,10 @@ TestSessionParameters#testSeedMakesConnectionSticky).
 | 2 | b2485694dab (#547) | 21 | 84cae757991 | = master at 8ed7adfe933 |
 | 3 | dc2122ac90a (#578) | 19 | f9d55d894dc | = master at 1c0c66423f7 |
 | 4 | ddbbb698b7f (#587) | 6 | a094c0e2c62 | = master at d69940aae41 |
+| 5 | b0e2b9f811a (#623) | 24 | 0e77bad4a84 | = master at 7c6f385c034 |
 
 Target: the latest upstream release, v1.5.2 (2cca6bf26c1, on REL_1_5_2), 877 commits past
-the import point; 65 are merged. Steps 1-3 were ~20 upstream commits each. From step 5 on
+the import point; 89 are merged. Steps 1-3 were ~20 upstream commits each. From step 5 on
 there is one step per upstream release tag and per upstream mass move or rewrite, each of
 those isolated in its own step.
 
@@ -58,6 +59,8 @@ are reviewed by reading, and kept out of YB builds where a YB flow can reach the
   ddbbb698b7f): YB has its own design; upstream's Parse/Describe/Bind code and helpers sit
   under #ifndef YB_SUPPORT_FOUND, as do its extra reset sync point (9d0de5d4e5e), its
   od_relay_step read condition and its sync asserts.
+- sequential_routing (c827bb4774b) and rule groups (8ba1e233a12): the YB config template
+  sets neither. The group checker is under #ifndef YB_SUPPORT_FOUND (b8004595a12).
 
 ## Open points
 
@@ -82,6 +85,14 @@ are reviewed by reading, and kept out of YB builds where a YB flow can reach the
   CopyFail in the extended protocol and disconnects without Sync leaves a pooled server
   inside the implicit transaction; od_backend_ready_wait leaks the ParameterStatus
   message.
+- Step 5: od_rules_merge now re-links the live rule list in config order on every reload
+  and asserts that every rule got a slot (c827bb4774b). This holds because the rules of
+  the YB template have distinct keys, not for the reason given in the step 5 merge
+  message: the config reader's "route is redefined" check never fires (upstream bug), and
+  two rules with the same key would crash the first reload. yb_warmup walks the rule list
+  without the router lock.
+- Correction to 7c6f385c034's message: od_hba_reload runs on every reload; it is a no-op
+  without an hba_file.
 - Behaviour changes inherited from upstream: queued clients are served newest first
   (de02985941c); an error-level "client is waiting in routing queue" log (ed6c55436bc); an
   external client whose socket is reset before routing now fails routing
