@@ -848,7 +848,9 @@ void od_system_config_reload(od_system_t *system)
 	od_log(&instance->logger, "rules", NULL, NULL,
 	       "%d routes created/deleted and scheduled for removal", updates);
 
+#ifndef YB_SUPPORT_FOUND
 	od_rules_groups_checkers_run(&instance->logger, &router->rules);
+#endif // YB_SUPPORT_FOUND
 }
 
 static inline void od_system(void *arg)
