@@ -390,9 +390,9 @@ od_frontend_attach(od_client_t *client, char *context,
 
 #ifndef YB_SUPPORT_FOUND
 		assert(od_server_synchronized(server));
-#endif // YB_SUPPORT_FOUND
 		assert(server->relay.iov == 0 ||
 		       !machine_iov_pending(server->relay.iov));
+#endif // YB_SUPPORT_FOUND
 
 		/* connect to server, if necessary */
 		if (server->io.io) {
