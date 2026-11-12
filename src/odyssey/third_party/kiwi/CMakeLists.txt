@@ -5,6 +5,9 @@ project(kiwi C)
 add_extra_yb_flags_in_odyssey()
 
 set(CMAKE_C_STANDARD 23)
+# YB: Keep the C standard of the YugabyteDB build; the PostgreSQL
+# sources compiled into machinarium do not build above C17
+set(CMAKE_C_STANDARD 17)
 
 if ("${CMAKE_BUILD_TYPE}" STREQUAL "")
     set(CMAKE_BUILD_TYPE "Debug")
