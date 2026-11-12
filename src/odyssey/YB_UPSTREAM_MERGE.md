@@ -42,9 +42,10 @@ TestSessionParameters#testSeedMakesConnectionSticky).
 | 7 | 806856e2706 (#742) | 1 | affb6473255 | covered by step 8 |
 | 8 | ac95c5f3bdb (tag 1.4.0) | 44 | e60d2980b14 | = master at fa841284ac8 |
 | 9 | 6a25e2a43c9 (#856) | 48 | df5dad279bb | = master at 6888a4c3b7b |
+| 10 | 43da5f9c6e9 (#860) | 1 | 8c214961ae6 | = master at 9dc9b245acb |
 
 Target: the latest upstream release, v1.5.2 (2cca6bf26c1, on REL_1_5_2), 877 commits past
-the import point; 265 are merged (upstream release 1.4.0 plus 48). Steps 1-3 were ~20 upstream commits each. From step 5 on
+the import point; 266 are merged (upstream release 1.4.0 plus 49). Steps 1-3 were ~20 upstream commits each. From step 5 on
 there is one step per upstream release tag and per upstream mass move or rewrite, each of
 those isolated in its own step.
 
@@ -179,3 +180,20 @@ are reviewed by reading, and kept out of YB builds where a YB flow can reach the
   the template never writes an empty host string).
 - The endpoint parser guards will conflict at upstream c1367cbf146 (unix socket as
   endpoint), which replaces the parser.
+- Step 10 (#pragma once + C23 sweep): Odyssey, kiwi, machinarium and the PostgreSQL
+  be-secure-openssl.c inside machinarium were compiled as gnu17 before the merge (the
+  top-level CMAKE_C_STANDARD 17 came last; upstream's -std=gnu11 was overridden) and still
+  are: 5ae420f6a18 sets 17 again after upstream's 23. The merge commit alone would compile
+  them as gnu23 and does not build. Upstream returns to C11 in f361135802d.
+- Step 10: mm_context_swap comes from context_swap_<arch>.S instead of a file-scope
+  asm() in context.c; same instructions. YugabyteDB's add_library() wrapper is a function
+  defined under the top-level policies, so the target has CMP0119 NEW and CMake passes
+  "-x c" for upstream's LANGUAGE C sources; 9dc9b245acb adds -xassembler-with-cpp. Not
+  built here: aarch64, gcc, debug, asan, tsan.
+- Step 10: YB-only headers keep their include guards (circular_queue.h, parse_queue.h,
+  yb_auth_passthrough.h, yb_oid_entry.h); yb_pg_tls_link_support.h has none by design.
+- Step 10 corrections to the merge message: endpoints_reader.c lost its guard and got no
+  #pragma once (161 files have one, all headers); "expected build issues: none" missed
+  the "-x c" failure; f361135802d's subject is "do not use postgresql library to impl
+  scram" and its CMAKE_C_STANDARD line abuts YB's lines, so expect a small conflict
+  there; sources/ldap_endpoint.c does not exist (only the header).
