@@ -180,8 +180,8 @@ static inline int update_oid_entry_via_ctrl_conn(const int obj_type,
 	/* connect to server, if necessary */
 	int rc;
 	if (server->io.io == NULL) {
-		rc = od_backend_connect(server, "control connection", NULL,
-					control_conn_client);
+		rc = od_backend_connect_service(server, "control connection",
+						NULL, control_conn_client);
 		if (rc == NOT_OK_RESPONSE) {
 			od_error(&instance->logger, "control connection",
 				 control_conn_client, server,

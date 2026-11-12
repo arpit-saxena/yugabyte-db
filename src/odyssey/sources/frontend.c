@@ -4218,8 +4218,8 @@ int yb_execute_on_control_connection(od_client_t *client,
 
 	/* connect to server, if necessary */
 	if (server->io.io == NULL) {
-		rc = od_backend_connect(server, "control connection", NULL,
-					control_conn_client);
+		rc = od_backend_connect_service(server, "control connection",
+						NULL, control_conn_client);
 		if (rc == NOT_OK_RESPONSE) {
 			/* [#28252] TODO: Merge the code below into the cleanup label */
 			od_debug(&instance->logger, "control connection",
@@ -4407,8 +4407,8 @@ int yb_auth_via_auth_backend(od_client_t *client)
 	control_conn_client->yb_is_authenticating = true;
 	od_getpeername(client->io.io, control_conn_client->yb_client_address,
 		       sizeof(control_conn_client->yb_client_address), 1, 0);
-	rc = od_backend_connect(server, "auth backend", NULL,
-							control_conn_client);
+	rc = od_backend_connect_service(server, "auth backend", NULL,
+					control_conn_client);
 	/*Store the client's logical_client_version as auth backend's logical_client_version*/
 	od_debug(&instance->logger, "auth backend", client, server,
 		 "setting client's logical client version to %" PRId64,
