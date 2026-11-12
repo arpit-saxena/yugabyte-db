@@ -13,7 +13,8 @@ upstream forward in small steps:
 - The commits after a merge, up to the next merge, are its build fixes, behaviour fixes
   and review follow-ups, one logical change each. Fixes that upstream itself makes later
   are taken as upstream wrote them and without a YB marker, so they disappear when that
-  upstream commit is merged.
+  upstream commit is merged. A fix that upstream made only after 1.5.2 carries YB markers
+  (6888a4c3b7b).
 - YB code replacing upstream code that upstream changed: upstream's code stays under
   `#ifndef YB_SUPPORT_FOUND`, YB's under `#else`.
 - New upstream features the YB path does not use are merged but not wired in.
@@ -40,9 +41,10 @@ TestSessionParameters#testSeedMakesConnectionSticky).
 | 6 | 87fa7d152d2 (#741) | 83 | 5a6c4cd2387 | = master at f2439459514; 6 classes rerun at 0891322f7d6 |
 | 7 | 806856e2706 (#742) | 1 | affb6473255 | covered by step 8 |
 | 8 | ac95c5f3bdb (tag 1.4.0) | 44 | e60d2980b14 | = master at fa841284ac8 |
+| 9 | 6a25e2a43c9 (#856) | 48 | df5dad279bb | = master at 6888a4c3b7b |
 
 Target: the latest upstream release, v1.5.2 (2cca6bf26c1, on REL_1_5_2), 877 commits past
-the import point; 217 are merged (upstream release 1.4.0). Steps 1-3 were ~20 upstream commits each. From step 5 on
+the import point; 265 are merged (upstream release 1.4.0 plus 48). Steps 1-3 were ~20 upstream commits each. From step 5 on
 there is one step per upstream release tag and per upstream mass move or rewrite, each of
 those isolated in its own step.
 
@@ -81,6 +83,20 @@ are reviewed by reading, and kept out of YB builds where a YB flow can reach the
   changes, group validation.
 - sequential_routing (c827bb4774b) and rule groups (8ba1e233a12): the YB config template
   sets neither. The group checker is under #ifndef YB_SUPPORT_FOUND (b8004595a12).
+- Step 9, under #ifndef YB_SUPPORT_FOUND: virtual SET processing and upstream's Query
+  case (da7c3e4c7d7, b69c18c616d; DISCARD emptying server->prep_stmts would leave YB's
+  LRU list dangling), od_frontend_should_detach_on_ready_for_query (e0b7d291258; YB keeps
+  its switch), upstream's od_relay_step read part (302632f1418; one guard now),
+  od_logger_shutdown at shutdown (24f49e516fe), the pgoptions target_session_attrs hint
+  (854130ba9a2; 1a0872b38c9), the empty-host rejection and the ':' split of an
+  unbracketed host in the new endpoint parser (46de66a5b20; 49a2569d282, d3e0d88c135),
+  the idle logger log line (973d3b7fc60). test_kiwi_pgoptions.c is left out of
+  odyssey_test.
+- Step 9, inert: virtual_processing, maintain_params (read only in
+  od_frontend_attach_and_deploy, which YB does not call), online_restart_drop_options,
+  availability_zone, listen and rule target_session_attrs, endpoints_status_poll_interval,
+  pause/resume (console only), sync_point_deploy_msg, bind_failed, machinarium mutex and
+  wait_group, worker and logger shutdown messages.
 
 ## Open points
 
@@ -139,3 +155,27 @@ are reviewed by reading, and kept out of YB builds where a YB flow can reach the
   external client whose socket is reset before routing now fails routing
   (f60df91a540); an external client naming the control connection db/user falls through
   to the default rule (b4033690208).
+- Step 9, inherited from upstream: od_backend_connect is upstream's rewrite (endpoint
+  round robin, target_session_attrs; with YB's single endpoint and "any" it connects as
+  before, plus two debug lines); an idle client coroutine wakes every 10 s instead of
+  60 s; worker and logger threads wake every 10 s (24f49e516fe); logger format, debug and
+  stdout settings apply after the log file is opened (2606bcaa950); one maintain_params
+  line per rule in the config dump; kiwi_enquote's backslash fix is upstream's now
+  (29045dbf00f).
+- Step 9, kept as before the merge: a killed client is stopped right after its wake-up
+  (2e59ffbf91a; upstream checks before the next wait); YB sets POSTGRESQL_FOUND itself
+  because it never calls find_package(PostgreSQL), and keeps -DUSE_SCRAM for the assert
+  in auth.c.
+- Step 9, upstream bug present in 1.5.2: mm_channel_read and mm_channel_read_back drop a
+  message delivered while the wait times out; with the 10 s worker read a new client
+  could be lost. 6888a4c3b7b takes the channel.c part of upstream e7cf47e7a69.
+- Step 9 corrections to the merge message: its "follow-up 4" (auth.c USE_SCRAM ->
+  POSTGRESQL_FOUND, deleting the #scram block) was not made; target_session_attrs is
+  still a keyword but is rejected inside a storage block; the abort() list also has
+  the target_session_attrs switch in backend.c (never reached with "any") and
+  od_frontend_should_detach_on_ready_for_query in frontend.c (upstream branch only).
+  test/odyssey/test_endpoints_parse.c does not match YB's parser guards (odyssey_test is
+  built, not run). od_parse_endpoints("") returns one uninitialised endpoint (upstream;
+  the template never writes an empty host string).
+- The endpoint parser guards will conflict at upstream c1367cbf146 (unix socket as
+  endpoint), which replaces the parser.
