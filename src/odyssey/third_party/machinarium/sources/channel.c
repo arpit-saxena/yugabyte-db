@@ -122,17 +122,20 @@ mm_msg_t *mm_channel_read(mm_channel_t *channel, uint32_t time_ms)
 		assert(channel->readers_count > 0);
 		channel->readers_count--;
 		mm_list_unlink(&reader.link);
+		/* YB: Upstream e7cf47e7a69 (after 1.5.2), taken early */
+		/* mm_call may return early for an already-cancelled coroutine. */
+		mm_errno_set(reader.event.call.status);
 	}
 
 	mm_sleeplock_unlock(&channel->lock);
 
-	/* timedout or cancel */
-	if (reader.event.call.status != 0) {
-		if (reader.result)
-			mm_msg_unref(&mm_self->msg_cache, reader.result);
-		return NULL;
-	}
-
+	/* YB: Upstream e7cf47e7a69 (after 1.5.2), taken early */
+	/*
+	 * A writer has transferred ownership of reader.result under the channel
+	 * lock. Return a delivered message even if the wait also timed out or
+	 * was cancelled; discarding it would lose work accepted by the channel.
+	 * Without a delivery, reader.result is NULL already.
+	 */
 	return reader.result;
 }
 
@@ -171,16 +174,13 @@ mm_msg_t *mm_channel_read_back(mm_channel_t *channel, uint32_t time_ms)
 		assert(channel->readers_count > 0);
 		channel->readers_count--;
 		mm_list_unlink(&reader.link);
+		/* YB: Upstream e7cf47e7a69 (after 1.5.2), taken early */
+		mm_errno_set(reader.event.call.status);
 	}
 
 	mm_sleeplock_unlock(&channel->lock);
 
-	/* timedout or cancel */
-	if (reader.event.call.status != 0) {
-		if (reader.result)
-			mm_msg_unref(&mm_self->msg_cache, reader.result);
-		return NULL;
-	}
-
+	/* YB: Upstream e7cf47e7a69 (after 1.5.2), taken early */
+	/* As in mm_channel_read, a delivered message wins over timeout/cancel. */
 	return reader.result;
 }
