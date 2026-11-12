@@ -13,9 +13,12 @@ static inline int
 od_config_reader_endpoint_host(char *host, od_storage_endpoint_t *endpoint)
 {
 	int host_len = strlen(host);
+	/* YB: "[]:port" (empty host) selects the unix socket */
+#ifndef YB_SUPPORT_FOUND
 	if (host_len <= 0) {
 		return NOT_OK_RESPONSE;
 	}
+#endif // YB_SUPPORT_FOUND
 
 	endpoint->host = malloc(host_len + 1);
 	if (endpoint->host == NULL) {
