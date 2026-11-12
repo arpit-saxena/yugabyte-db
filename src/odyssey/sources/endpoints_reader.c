@@ -86,6 +86,7 @@ od_config_reader_parse_endpoint(char *buff, od_storage_endpoint_t *endpoint)
 	char *token = NULL;
 
 	if (buff[0] != '[') {
+#ifndef YB_SUPPORT_FOUND
 		token = strtok_r(buff, ":", &strtok_preserve);
 		if (token == NULL) {
 			goto error;
@@ -97,6 +98,13 @@ od_config_reader_parse_endpoint(char *buff, od_storage_endpoint_t *endpoint)
 		}
 
 		token = strtok_r(NULL, ":", &strtok_preserve);
+#else // YB_SUPPORT_FOUND
+		/* YB: A host without brackets is taken whole (IPv6 literals) */
+		if (od_config_reader_endpoint_host(buff, endpoint) !=
+		    OK_RESPONSE) {
+			goto error;
+		}
+#endif // YB_SUPPORT_FOUND
 	} else {
 		/* need to find ']' by ourself */
 		char *host = buff + 1;
