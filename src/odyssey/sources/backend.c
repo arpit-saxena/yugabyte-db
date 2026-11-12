@@ -1725,6 +1725,7 @@ int od_backend_connect(od_server_t *server, char *context,
 		effective_tsa = default_tsa;
 	}
 
+#ifndef YB_SUPPORT_FOUND
 	kiwi_var_t *hint_var = kiwi_vars_get(
 		&client->vars, KIWI_VAR_ODYSSEY_TARGET_SESSION_ATTRS);
 
@@ -1743,6 +1744,7 @@ int od_backend_connect(od_server_t *server, char *context,
 			effective_tsa = OD_TARGET_SESSION_ATTRS_ANY;
 		}
 	}
+#endif // YB_SUPPORT_FOUND
 
 	/* 'read-write' and 'read-only' is passed as is, 'any' or unknown == any */
 
