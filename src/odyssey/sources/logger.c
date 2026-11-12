@@ -555,9 +555,11 @@ static inline void od_logger(void *arg)
 		msg = machine_channel_read(logger->task_channel,
 					   task_wait_timeout_ms);
 		if (msg == NULL) {
+#ifndef YB_SUPPORT_FOUND
 			od_log(logger, "logger", NULL, NULL,
 			       "logger: no new messages for %u ms",
 			       task_wait_timeout_ms);
+#endif // YB_SUPPORT_FOUND
 			continue;
 		}
 
