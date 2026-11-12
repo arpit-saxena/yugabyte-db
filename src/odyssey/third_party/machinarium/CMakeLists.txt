@@ -5,8 +5,8 @@ project(machinarium C)
 add_extra_yb_flags_in_odyssey()
 
 set(CMAKE_C_STANDARD 23)
-# YB: Keep the C standard of the YugabyteDB build; the PostgreSQL
-# sources compiled into machinarium do not build above C17
+# YB: Keep the C standard of the YugabyteDB build; PostgreSQL, whose
+# be-secure-openssl.c is compiled into machinarium, supports at most C17
 set(CMAKE_C_STANDARD 17)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH}

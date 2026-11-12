@@ -68,7 +68,8 @@ else()
     message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 endif()
 
-# YB: With CMP0119 NEW, as in the YugabyteDB build, LANGUAGE C adds "-x c"
+# YB: YugabyteDB's add_library() wrapper creates the target with CMP0119 NEW,
+# so LANGUAGE C adds "-x c"
 set_source_files_properties(
     context_swap_x64.S context_swap_x32.S context_swap_aarch64.S
     PROPERTIES COMPILE_OPTIONS "-xassembler-with-cpp")
