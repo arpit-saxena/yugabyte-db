@@ -407,7 +407,13 @@ od_frontend_attach(od_client_t *client, char *context,
 
 		int rc;
 		od_atomic_u32_inc(&router->servers_routing);
-		rc = od_backend_connect(server, context, route_params, client);
+
+		assert(client->config_listen != NULL);
+		rc = od_backend_connect(
+			server, context, route_params, client,
+
+			client->config_listen->target_session_attrs);
+
 		od_atomic_u32_dec(&router->servers_routing);
 		if (rc == -1) {
 			/* In case of 'too many connections' error, retry attach attempt by
@@ -480,18 +486,22 @@ od_frontend_attach_and_deploy(od_client_t *client, char *context)
 	od_server_t *server = client->server;
 
 	/* configure server using client parameters */
-	int rc;
-	rc = od_deploy(client, context);
-	if (rc == -1)
-		return OD_ESERVER_WRITE;
+	if (client->rule->maintain_params) {
+		int rc;
+		rc = od_deploy(client, context);
+		if (rc == -1)
+			return OD_ESERVER_WRITE;
 
-	if (client->deploy_err)
-		return YB_OD_DEPLOY_ERR;
+		/* YB */
+		if (client->deploy_err)
+			return YB_OD_DEPLOY_ERR;
 
-	/* set number of replies to discard */
-	server->deploy_sync = rc;
+		/* set number of replies to discard */
+		server->deploy_sync = rc;
 
-	od_server_sync_request(server, server->deploy_sync);
+		od_server_sync_request(server, server->deploy_sync);
+	}
+
 	return OD_OK;
 }
 
@@ -595,6 +605,12 @@ static inline bool od_eject_conn_with_rate(od_client_t *client,
 					   od_server_t *server,
 					   od_instance_t *instance)
 {
+	od_config_t *config = &instance->config;
+
+	if (!config->online_restart_drop_options.drop_enabled) {
+		return false;
+	}
+
 	if (server == NULL) {
 		/* server is null - client was never attached to any server so its ok to eject this conn  */
 		return true;
@@ -610,23 +626,24 @@ static inline bool od_eject_conn_with_rate(od_client_t *client,
 
 	od_conn_eject_info *info = (*gl)->info;
 
-	struct timeval tv;
-	gettimeofday(&tv, NULL);
+	uint32_t now_sec = machine_timeofday_sec();
 	bool res = false;
 
 	pthread_mutex_lock(&info->mu);
 	{
-		if (info->last_conn_drop_ts + /* 1 sec */ 1 > tv.tv_sec) {
-			od_log(&instance->logger, "shutdown", client, server,
-			       "delay drop client connection on restart, last drop was too recent (wid %d, last drop %d, curr time %ld)",
-			       (*gl)->wid, info->last_conn_drop_ts, tv.tv_sec);
-		} else {
-			info->last_conn_drop_ts = tv.tv_sec;
+		if (info->last_conn_drop_ts + 1 < now_sec) {
 			res = true;
 
 			od_log(&instance->logger, "shutdown", client, server,
-			       "drop client connection on restart (wid %d, last eject %d, curr time %ld)",
-			       (*gl)->wid, info->last_conn_drop_ts, tv.tv_sec);
+			       "drop client connection on restart (wid %d, last eject %d, curr time %d)",
+			       (*gl)->wid, info->last_conn_drop_ts, now_sec);
+
+			info->last_conn_drop_ts = now_sec;
+		} else {
+			od_debug(
+				&instance->logger, "shutdown", client, server,
+				"delay drop client connection on restart, last drop was too recent (wid %d, last drop %d, curr time %d)",
+				(*gl)->wid, info->last_conn_drop_ts, now_sec);
 		}
 	}
 	pthread_mutex_unlock(&info->mu);
@@ -653,94 +670,6 @@ static inline bool od_eject_conn_with_timeout(od_client_t *client,
 	return false;
 }
 
-static inline bool od_should_drop_connection(od_client_t *client,
-					     od_server_t *server)
-{
-	od_instance_t *instance = client->global->instance;
-
-	switch (client->rule->pool->pool) {
-	case OD_RULE_POOL_SESSION: {
-		if (od_unlikely(client->rule->pool->client_idle_timeout)) {
-			// as we do not unroute client in session pooling after transaction block etc
-			// we should consider this case separately
-			// general logic is: if client do nothing long enough we can assume this is just a stale connection
-			// but we need to ensure this connection was initialized etc
-			if (od_unlikely(
-				    server != NULL && !server->is_transaction &&
-				    /* case when we are out of any transactional block ut perform some stmt */
-				    od_server_synchronized(server))) {
-				if (od_eject_conn_with_timeout(
-					    client, server,
-					    client->rule->pool
-						    ->client_idle_timeout)) {
-					od_log(&instance->logger, "shutdown",
-					       client, server,
-					       "drop idle client connection on due timeout %" PRIu64 " sec",
-					       client->rule->pool
-						       ->client_idle_timeout);
-
-					return true;
-				}
-			}
-		}
-		if (od_unlikely(
-			    client->rule->pool->idle_in_transaction_timeout)) {
-			// the same as above but we are going to drop client inside transaction block
-			if (server != NULL && server->is_transaction &&
-			    /*server is sync - that means client executed some stmts and got get result, and now just... do nothing */
-			    od_server_synchronized(server)) {
-				if (od_eject_conn_with_timeout(
-					    client, server,
-					    client->rule->pool
-						    ->idle_in_transaction_timeout)) {
-					od_log(&instance->logger, "shutdown",
-					       client, server,
-					       "drop idle in transaction connection on due timeout %" PRIu64 " sec",
-					       client->rule->pool
-						       ->idle_in_transaction_timeout);
-
-					return true;
-				}
-			}
-		}
-	}
-		/* fall through */
-		yb_od_attribute_fallthrough;
-	case OD_RULE_POOL_STATEMENT:
-	case OD_RULE_POOL_TRANSACTION: {
-		//TODO:: drop no more than X connection per sec/min/whatever
-		if (od_likely(instance->shutdown_worker_id ==
-			      INVALID_COROUTINE_ID)) {
-			// try to optimize likely path
-			return false;
-		}
-
-		if (od_unlikely(client->rule->storage->storage_type ==
-				OD_RULE_STORAGE_LOCAL)) {
-			/* local server is not very important (db like console, pgbouncer used for stats)*/
-			return true;
-		}
-
-		if (od_unlikely(server == NULL)) {
-			return od_eject_conn_with_rate(client, server,
-						       instance);
-		}
-		if (server->state ==
-			    OD_SERVER_ACTIVE /* we can drop client that are just connected and do not perform any queries */
-		    && !od_server_synchronized(server)) {
-			/* most probably we are not in transaction, but still executing some stmt */
-			return false;
-		}
-		if (od_unlikely(!server->is_transaction)) {
-			return od_eject_conn_with_rate(client, server,
-						       instance);
-		}
-		return false;
-	} break;
-	default:
-		return false;
-	}
-}
 static od_frontend_status_t od_frontend_ctl(od_client_t *client)
 {
 #ifndef YB_SUPPORT_FOUND
@@ -759,20 +688,206 @@ static od_frontend_status_t od_frontend_ctl(od_client_t *client)
 	return OD_OK;
 }
 
+static inline od_frontend_status_t
+od_process_drop_on_restart(od_client_t *client)
+{
+	//TODO:: drop no more than X connection per sec/min/whatever
+	od_instance_t *instance = client->global->instance;
+	od_server_t *server = client->server;
+
+	if (od_likely(instance->shutdown_worker_id == INVALID_COROUTINE_ID)) {
+		// try to optimize likely path
+		return OD_OK;
+	}
+
+	if (od_unlikely(client->rule->storage->storage_type ==
+			OD_RULE_STORAGE_LOCAL)) {
+		/* local server is not very important (db like console, pgbouncer used for stats)*/
+		return OD_ECLIENT_READ;
+	}
+
+	if (od_unlikely(server == NULL)) {
+		if (od_eject_conn_with_rate(client, server, instance)) {
+			return OD_ECLIENT_READ;
+		}
+		return OD_OK;
+	}
+
+	if (server->state ==
+		    OD_SERVER_ACTIVE /* we can drop client that are just connected and do not perform any queries */
+	    && !od_server_synchronized(server)) {
+		/* most probably we are not in transaction, but still executing some stmt */
+		return OD_OK;
+	}
+
+	if (od_unlikely(!server->is_transaction)) {
+		if (od_eject_conn_with_rate(client, server, instance)) {
+			return OD_ECLIENT_READ;
+		}
+		return OD_OK;
+	}
+
+	return OD_OK;
+}
+
+static inline od_frontend_status_t
+od_process_drop_transaction_pool(od_client_t *client)
+{
+	return od_process_drop_on_restart(client);
+}
+
+static inline od_frontend_status_t
+od_process_drop_on_client_idle_timeout(od_client_t *client, od_server_t *server)
+{
+	od_instance_t *instance = client->global->instance;
+
+	// as we do not unroute client in session pooling after transaction block etc
+	// we should consider this case separately
+	// general logic is: if client do nothing long enough we can assume this is just a stale connection
+	// but we need to ensure this connection was initialized etc
+	if (od_unlikely(
+		    server != NULL && !server->is_transaction &&
+		    /* case when we are out of any transactional block ut perform some stmt */
+		    od_server_synchronized(server))) {
+		if (od_eject_conn_with_timeout(
+			    client, server,
+			    client->rule->pool->client_idle_timeout)) {
+			od_log(&instance->logger, "shutdown", client, server,
+			       /* YB */
+			       "drop idle client connection on due timeout %" PRIu64 " sec",
+			       client->rule->pool->client_idle_timeout);
+
+			return OD_ECLIENT_READ;
+		}
+	}
+
+	return OD_OK;
+}
+
+static inline od_frontend_status_t
+od_process_drop_on_idle_in_transaction(od_client_t *client, od_server_t *server)
+{
+	od_instance_t *instance = client->global->instance;
+
+	// the same as above but we are going to drop client inside transaction block
+	if (server != NULL && server->is_transaction &&
+	    /*server is sync - that means client executed some stmts and got get result, and now just... do nothing */
+	    od_server_synchronized(server)) {
+		if (od_eject_conn_with_timeout(
+			    client, server,
+			    client->rule->pool->idle_in_transaction_timeout)) {
+			od_log(&instance->logger, "shutdown", client, server,
+			       /* YB */
+			       "drop idle in transaction connection on due timeout %" PRIu64 " sec",
+			       client->rule->pool->idle_in_transaction_timeout);
+
+			return OD_ECLIENT_READ;
+		}
+	}
+
+	return OD_OK;
+}
+
+static inline bool od_process_should_drop_session_on_pause(od_client_t *client,
+							   od_server_t *server)
+{
+	if (!od_global_is_paused(client->global)) {
+		return false;
+	}
+
+	od_route_t *route = client->route;
+
+	/* do not drop console clients */
+	if (route->rule->storage->storage_type == OD_RULE_STORAGE_LOCAL) {
+		return false;
+	}
+
+	if (server == NULL) {
+		return true;
+	}
+
+	if (!od_server_synchronized(server)) {
+		return false;
+	}
+
+	if (server->offline || !server->is_transaction) {
+		return true;
+	}
+
+	return false;
+}
+
+static inline od_frontend_status_t
+od_process_drop_session_pool(od_client_t *client)
+{
+	od_frontend_status_t status;
+	od_server_t *server = client->server;
+
+	if (od_process_should_drop_session_on_pause(client, server)) {
+		od_instance_t *instance = client->global->instance;
+		od_log(&instance->logger, "pause", client, server,
+		       "drop client connection on pause");
+
+		return OD_ECLIENT_READ;
+	}
+
+	if (od_unlikely(client->rule->pool->client_idle_timeout)) {
+		status = od_process_drop_on_client_idle_timeout(client, server);
+		if (status != OD_OK) {
+			return status;
+		}
+	}
+
+	if (od_unlikely(client->rule->pool->idle_in_transaction_timeout)) {
+		status = od_process_drop_on_idle_in_transaction(client, server);
+		if (status != OD_OK) {
+			return status;
+		}
+	}
+
+	status = od_process_drop_on_restart(client);
+
+	return status;
+}
+
+static inline od_frontend_status_t
+od_process_connection_drop(od_client_t *client)
+{
+	od_frontend_status_t status = od_frontend_ctl(client);
+	if (status != OD_OK) {
+		return status;
+	}
+
+	switch (client->rule->pool->pool_type) {
+	case OD_RULE_POOL_SESSION:
+		return od_process_drop_session_pool(client);
+	case OD_RULE_POOL_STATEMENT:
+	case OD_RULE_POOL_TRANSACTION:
+		return od_process_drop_transaction_pool(client);
+	default:
+		abort();
+	}
+
+	return OD_OK;
+}
+
 static od_frontend_status_t od_frontend_local(od_client_t *client)
 {
 	od_instance_t *instance = client->global->instance;
+
+	od_frontend_status_t status;
 
 	for (;;) {
 		machine_msg_t *msg = NULL;
 		for (;;) {
 			/* local server is always null */
-			if (od_should_drop_connection(client, NULL)) {
+			assert(client->server == NULL);
+			status = od_process_connection_drop(client);
+			if (status != OD_OK) {
 				/* Odyssey is in a state of completion, we done
-                         * the last client's request and now we can drop the connection  */
-
-				/* a sort of EAGAIN */
-				return OD_ECLIENT_READ;
+				 * the last client's request and now we can drop the connection
+				 */
+				return status;
 			}
 			/* one minute */
 			msg = od_read(&client->io, 60000);
@@ -789,13 +904,6 @@ static od_frontend_status_t od_frontend_local(od_client_t *client)
 				break;
 			}
 		}
-
-		/* client operations */
-		od_frontend_status_t status;
-		status = od_frontend_ctl(client);
-
-		if (status != OD_OK)
-			break;
 
 		kiwi_fe_type_t type;
 		type = *(char *)machine_msg_data(msg);
@@ -843,7 +951,7 @@ static od_frontend_status_t od_frontend_local(od_client_t *client)
 		}
 
 		/* ready */
-		msg = kiwi_be_write_ready(stream, 'I');
+		msg = kiwi_be_write_ready(stream, KIWI_BE_EMPTY_QUERY_RESPONSE);
 		if (msg == NULL) {
 			machine_msg_free(stream);
 			return OD_EOOM;
@@ -856,6 +964,33 @@ static od_frontend_status_t od_frontend_local(od_client_t *client)
 	}
 
 	return OD_OK;
+}
+
+static inline bool od_frontend_should_detach_transaction(od_server_t *server)
+{
+	return !server->is_transaction;
+}
+
+static inline bool od_frontend_should_detach_session(od_server_t *server)
+{
+	return (server->offline || od_global_is_paused(server->global)) &&
+	       !server->is_transaction;
+}
+
+static inline bool
+od_frontend_should_detach_on_ready_for_query(od_route_t *route,
+					     od_server_t *server)
+{
+	switch (route->rule->pool->pool_type) {
+	case OD_RULE_POOL_STATEMENT:
+		return true;
+	case OD_RULE_POOL_TRANSACTION:
+		return od_frontend_should_detach_transaction(server);
+	case OD_RULE_POOL_SESSION:
+		return od_frontend_should_detach_session(server);
+	default:
+		abort();
+	}
 }
 
 static void yb_undo_parse_queue_entry(od_server_t *server,
@@ -1054,6 +1189,10 @@ static od_frontend_status_t od_frontend_remote_server(od_relay_t *relay,
 		break;
 	}
 	case KIWI_BE_ERROR_RESPONSE:
+
+		if (od_server_in_sync_point(server)) {
+			server->sync_point_deploy_msg = NULL;
+		}
 		od_backend_error(server, "main", data, size);
 		break;
 	case KIWI_BE_PARAMETER_STATUS:
@@ -1223,6 +1362,12 @@ static od_frontend_status_t od_frontend_remote_server(od_relay_t *relay,
 	} else {
 		if (is_ready_for_query && od_server_synchronized(server) &&
 		    server->parse_msg == NULL) {
+#ifndef YB_SUPPORT_FOUND
+			if (od_frontend_should_detach_on_ready_for_query(
+				    route, server)) {
+				return OD_DETACH;
+			}
+#else // YB_SUPPORT_FOUND
 			/* YB */
 			int rc = yb_resume_client_relay(client);
 			if (rc != 0) {
@@ -1231,7 +1376,7 @@ static od_frontend_status_t od_frontend_remote_server(od_relay_t *relay,
 					od_io_error(client->relay.src));
 				return OD_ECLIENT_READ;
 			}
-			switch (route->rule->pool->pool) {
+			switch (route->rule->pool->pool_type) {
 			case OD_RULE_POOL_STATEMENT:
 				return OD_DETACH;
 			case OD_RULE_POOL_TRANSACTION:
@@ -1251,12 +1396,14 @@ static od_frontend_status_t od_frontend_remote_server(od_relay_t *relay,
 				}
 				break;
 			}
+#endif // YB_SUPPORT_FOUND
 		}
 	}
 
 	return retstatus;
 }
 
+/* YB: Still called for Query packets; upstream inlined it */
 static inline od_retcode_t od_frontend_log_query(od_instance_t *instance,
 						 od_client_t *client,
 						 char *data, int size)
@@ -1538,6 +1685,148 @@ od_frontend_deploy_prepared_stmt_msg(od_server_t *server, od_relay_t *relay,
 }
 #endif // YB_SUPPORT_FOUND
 
+#ifndef YB_SUPPORT_FOUND
+static od_frontend_status_t od_process_virtual_set(od_client_t *client,
+						   od_parser_t *parser)
+{
+	od_token_t token;
+	od_keyword_t *keyword;
+	char *option_value;
+	int option_value_len;
+	int rc;
+	od_server_t *server;
+	od_instance_t *instance = client->global->instance;
+
+	server = client->server;
+
+	assert(server != NULL);
+
+	rc = od_parser_next(parser, &token);
+
+	switch (rc) {
+	case OD_PARSER_KEYWORD:
+
+		keyword = od_keyword_match(od_virtual_process_keywords, &token);
+		if (keyword == NULL || keyword->id != OD_VIRTUAL_LODYSSEY) {
+			/* some other option, ship */
+			return OD_OK;
+		}
+		break;
+	default:
+		return OD_OK;
+	}
+
+	rc = od_parser_next(parser, &token);
+	if (rc != OD_PARSER_SYMBOL || token.value.num != '.') {
+		return OD_OK;
+	}
+
+	rc = od_parser_next(parser, &token);
+
+	switch (rc) {
+	case OD_PARSER_KEYWORD:
+		keyword = od_keyword_match(od_virtual_process_keywords, &token);
+		if (keyword == NULL || keyword->id != OD_VIRTUAL_LTSA) {
+			/* some other option, ship */
+			return OD_OK;
+		}
+		break;
+	default:
+		return OD_OK;
+	}
+
+	rc = od_parser_next(parser, &token);
+	if (rc != OD_PARSER_SYMBOL || token.value.num != '=') {
+		return OD_OK;
+	}
+
+	rc = od_parser_next(parser, &token);
+
+	if (rc != OD_PARSER_STRING) {
+		return OD_OK;
+	}
+
+	option_value = token.value.string.pointer;
+	option_value_len = token.value.string.size;
+
+	/* for now, very straightforward logic, as there is only one supported param */
+	if (strncasecmp(option_value, "read-only", option_value_len) == 0) {
+		kiwi_vars_set(&client->vars,
+			      KIWI_VAR_ODYSSEY_TARGET_SESSION_ATTRS,
+			      option_value, option_value_len);
+	} else if (strncasecmp(option_value, "read-write", option_value_len) ==
+		   0) {
+		kiwi_vars_set(&client->vars,
+			      KIWI_VAR_ODYSSEY_TARGET_SESSION_ATTRS,
+			      option_value, option_value_len);
+	} else if (strncasecmp(option_value, "any", option_value_len) == 0) {
+		kiwi_vars_set(&client->vars,
+			      KIWI_VAR_ODYSSEY_TARGET_SESSION_ATTRS,
+			      option_value, option_value_len);
+	} else {
+		/* some other option name, fallback to regular logic */
+		return OD_OK;
+	}
+
+	od_debug(&instance->logger, "virtual processing", client, server,
+		 "parsed tsa hint %.*s", option_value_len, option_value);
+
+	/* skip this query */
+	server->sync_point_deploy_msg =
+		kiwi_be_write_command_complete(NULL, "SET", sizeof("SET"));
+	if (server->sync_point_deploy_msg == NULL)
+		return OD_ESERVER_WRITE;
+
+	server->sync_point_deploy_msg =
+		kiwi_be_write_ready(server->sync_point_deploy_msg, 'I');
+	if (server->sync_point_deploy_msg == NULL)
+		return OD_ESERVER_WRITE;
+
+	/* request sync point to deploy our virtual responce to client */
+	return OD_REQ_SYNC;
+}
+
+static od_frontend_status_t
+od_virtual_process_query(od_client_t *client, char *query, uint32_t query_len)
+{
+	/* Okay, this is probably SET x = y;
+	* unless user specified invalid query.
+	* We can try to perform virtual processing of this query,
+	* if this is odyssey-only parameter.
+	*/
+	od_parser_t parser;
+	int rc;
+	od_parser_init(&parser, query, query_len);
+
+	od_token_t token;
+	rc = od_parser_next(&parser, &token);
+
+	switch (rc) {
+	case OD_PARSER_KEYWORD:
+		break;
+	default:
+		return OD_OK;
+	}
+
+	od_keyword_t *keyword;
+	keyword = od_keyword_match(od_virtual_process_keywords, &token);
+
+	if (keyword == NULL) {
+		return OD_OK;
+	}
+
+	switch (keyword->id) {
+	case OD_VIRTUAL_LSET:
+		return od_process_virtual_set(client, &parser);
+	case OD_VIRTUAL_LSHOW:
+	/* fallthrough */
+	/* XXX: implement virtual show */
+	default:
+		return OD_OK;
+	}
+}
+#endif // YB_SUPPORT_FOUND
+
 /*
  * YB: Prepare the key using which we identify the index of the server hashmap to search.
  */
@@ -1596,6 +1885,9 @@ yb_frontend_throw_error(od_relay_t *relay, od_client_t *client,
 static od_frontend_status_t od_frontend_remote_client(od_relay_t *relay,
 						      char *data, int size)
 {
+	uint32_t query_len;
+	char *query;
+	int rc;
 	/*
 	 * YB: This is called during relay processing, so any message to be forwarded
 	 * needs to be added to the relay->iov buffer and not written using od_write.
@@ -1625,6 +1917,16 @@ static od_frontend_status_t od_frontend_remote_client(od_relay_t *relay,
 	assert(server != NULL);
 	assert(server->parse_msg == NULL);
 
+	/* XXX: reset query state on transaction block bound here.  */
+	switch (type) {
+	case KIWI_FE_SYNC:
+	case KIWI_FE_QUERY:
+		server->bind_failed = 0;
+		break;
+	default:
+		break;
+	}
+
 	if (instance->config.log_debug)
 		od_debug(&instance->logger, "remote client", client, server,
 			 "%s", kiwi_fe_type_to_string(type));
@@ -1653,6 +1955,43 @@ static od_frontend_status_t od_frontend_remote_client(od_relay_t *relay,
 #endif // YB_SUPPORT_FOUND
 		break;
 	case KIWI_FE_QUERY:
+#ifndef YB_SUPPORT_FOUND
+		rc = kiwi_be_read_query(data, size, &query, &query_len);
+
+		if (rc != OK_RESPONSE) {
+			return OD_ESERVER_WRITE;
+		}
+
+		if (instance->config.log_query || route->rule->log_query)
+			od_log(&instance->logger, "query", client, NULL, "%.*s",
+			       query_len, query);
+
+		int invalidate = 0;
+
+		if (query_len >= 7 &&
+		    route->rule->pool->reserve_prepared_statement) {
+			if (strncmp(query, "DISCARD", 7) == 0) {
+				od_debug(&instance->logger, "simple query",
+					 client, server,
+					 "discard detected, invalidate caches");
+				invalidate = 1;
+			}
+		}
+
+		if (invalidate)
+			od_hashmap_empty(server->prep_stmts);
+
+		if (instance->config.virtual_processing) {
+			/* try to do virtual processing of this query */
+			retstatus = od_virtual_process_query(client, query,
+							     query_len);
+			if (retstatus != OD_OK) {
+				return retstatus;
+			}
+		}
+
+#else // YB_SUPPORT_FOUND
+		/* YB: No DISCARD or virtual SET handling */
 		if (instance->config.log_query || route->rule->log_query)
 			od_frontend_log_query(instance, client, data, size);
 		if (route->rule->pool->reserve_prepared_statement) {
@@ -1663,6 +2002,7 @@ static od_frontend_status_t od_frontend_remote_client(od_relay_t *relay,
 				return OD_EOOM;
 			server->yb_unnamed_prep_stmt_client_id = client->id;
 		}
+#endif // YB_SUPPORT_FOUND
 		/* update server sync state */
 		od_server_sync_request(server, 1);
 		break;
@@ -1694,7 +2034,11 @@ static od_frontend_status_t od_frontend_remote_client(od_relay_t *relay,
 		if (instance->config.log_query || route->rule->log_query)
 			od_frontend_log_describe(instance, client, data, size);
 
-		if (route->rule->pool->reserve_prepared_statement) {
+		/* we did not re-transmit faield bind to server, so we ignore this bind */
+		if (server->bind_failed) {
+			retstatus = OD_SKIP;
+			/* do not reset server->bind_failed yet */
+		} else if (route->rule->pool->reserve_prepared_statement) {
 			uint32_t operator_name_len;
 			char *operator_name;
 			int rc;
@@ -1758,7 +2102,7 @@ static od_frontend_status_t od_frontend_remote_client(od_relay_t *relay,
 							 machine_msg_size(msg));
 			}
 
-			// msg if deallocated automaictly
+			// msg if deallocated automatically
 			machine_iov_add(relay->iov, msg);
 			od_dbg_printf_on_dvl_lvl(
 				1, "client relay %p advance msg %c\n", relay,
@@ -1957,7 +2301,6 @@ static od_frontend_status_t od_frontend_remote_client(od_relay_t *relay,
 		if (instance->config.log_query || route->rule->log_query)
 			od_frontend_log_parse(instance, client, "parse", data,
 					      size);
-
 		if (route->rule->pool->reserve_prepared_statement) {
 			/* skip client parse msg */
 #ifndef YB_SUPPORT_FOUND
@@ -2008,6 +2351,12 @@ static od_frontend_status_t od_frontend_remote_client(od_relay_t *relay,
 					*/
 					return OD_ESERVER_WRITE;
 				}
+			}
+
+			server->sync_point_deploy_msg =
+				kiwi_be_write_parse_complete(NULL);
+			if (server->sync_point_deploy_msg == NULL) {
+				return OD_ESERVER_WRITE;
 			}
 #else // YB_SUPPORT_FOUND
 			/* YB: unnamed prepared statement, separately track */
@@ -2154,13 +2503,30 @@ static od_frontend_status_t od_frontend_remote_client(od_relay_t *relay,
 				(od_hashmap_elt_t *)od_hashmap_find(
 					client->prep_stmt_ids, keyhash, &key);
 			if (desc == NULL) {
+				char errbuf[OD_QRY_MAX_SZ];
+				int errlen;
+
 				od_debug(
 					&instance->logger, "remote client",
 					client, server,
 					"%.*s (%u) operator was not prepared by this client",
 					operator_name_len, operator_name,
 					keyhash);
-				return OD_ESERVER_WRITE;
+
+				assert(server->sync_point_deploy_msg == NULL);
+
+				errlen = od_snprintf(
+					errbuf, sizeof(errbuf),
+					"prepared statement \"%.*s\" does not exist",
+					operator_name_len, operator_name);
+
+				server->sync_point_deploy_msg =
+					kiwi_be_write_error(
+						server->sync_point_deploy_msg,
+						KIWI_UNDEFINED_PSTATEMENT,
+						errbuf, errlen);
+				server->bind_failed = 1;
+				return OD_REQ_SYNC;
 			}
 
 			od_hash_t body_hash =
@@ -2418,6 +2784,10 @@ static od_frontend_status_t od_frontend_remote_client(od_relay_t *relay,
 	case KIWI_FE_EXECUTE:
 		if (instance->config.log_query || route->rule->log_query)
 			od_frontend_log_execute(instance, client, data, size);
+		if (server->bind_failed) {
+			retstatus = OD_SKIP;
+			/* do not reset server->bind_failed yet */
+		}
 		break;
 	case KIWI_FE_CLOSE:
 		if (route->rule->pool->reserve_prepared_statement) {
@@ -2599,9 +2969,10 @@ static inline od_frontend_status_t od_frontend_poll_catchup(od_client_t *client,
 }
 
 static inline od_frontend_status_t
-od_frontend_remote_process_server(od_server_t *server, od_client_t *client,
-				  bool await_read)
+od_frontend_remote_process_server(od_client_t *client, bool await_read)
 {
+	od_server_t *server = client->server;
+	assert(server != NULL);
 	od_frontend_status_t status = od_relay_step(&server->relay, await_read);
 	int rc;
 	od_instance_t *instance = client->global->instance;
@@ -2682,12 +3053,117 @@ od_frontend_check_replica_catchup(od_instance_t *instance, od_client_t *client)
 	return status;
 }
 
+static int wait_client_activity(od_client_t *client)
+{
+	/* io_cond is set up by client or server relay */
+	if (machine_cond_wait(client->io_cond, 10 * 1000 /* 10 sec */) == 0) {
+		client->time_last_active = machine_time_us();
+#ifndef YB_SUPPORT_FOUND
+		od_dbg_printf_on_dvl_lvl(
+			1, "change client last active time %lld\n",
+			client->time_last_active);
+#endif // YB_SUPPORT_FOUND
+
+		return 1;
+	}
+
+	return 0;
+}
+
+static int wait_resume_transactional_step(od_client_t *client)
+{
+	od_instance_t *instance = client->global->instance;
+	od_server_t *server = client->server;
+
+	/* client must be detached to start waiting for resume */
+	if (server != NULL) {
+		return 0;
+	}
+
+	int rc = od_global_wait_resumed(client->global, 1000 /* 1 sec */);
+	if (rc == 0) {
+		od_log(&instance->logger, "pause", client, server,
+		       "waiting for global resume finished");
+	} else {
+		od_log(&instance->logger, "pause", client, server,
+		       "client is waiting for global resume...");
+	}
+
+	return rc;
+}
+
+static int wait_resume_step(od_client_t *client)
+{
+	od_route_t *route = client->route;
+
+	/* do not wait resume for console clients */
+	if (route->rule->storage->storage_type == OD_RULE_STORAGE_LOCAL) {
+		return 0;
+	}
+
+	if (!od_global_is_paused(client->global)) {
+		return 0;
+	}
+
+	switch (route->rule->pool->pool_type) {
+	case OD_RULE_POOL_SESSION:
+		return 0;
+	case OD_RULE_POOL_STATEMENT:
+		/* fall through */
+	case OD_RULE_POOL_TRANSACTION:
+		return wait_resume_transactional_step(client);
+	default:
+		abort();
+	}
+}
+
+/*
+ * Wait some read/write events or connection drop condition to become true
+ */
+static od_frontend_status_t wait_any_activity(od_client_t *client)
+{
+	od_frontend_status_t status;
+
+	for (;;) {
+		status = od_process_connection_drop(client);
+		if (status != OD_OK) {
+			/* Odyssey is going to shut down or client conn is dropped
+			* due some idle timeout, we drop the connection  */
+			return status;
+		}
+
+/* YB: Disabled the unnecessary logs */
+#ifndef YB_SUPPORT_FOUND
+#if OD_DEVEL_LVL != OD_RELEASE_MODE
+		od_server_t *server = client->server;
+		if (server != NULL && server->is_transaction &&
+		    od_server_synchronized(server)) {
+			od_dbg_printf_on_dvl_lvl(
+				1, "here we have idle in transaction: cid %s\n",
+				client->id.id);
+		}
+#endif
+#endif // YB_SUPPORT_FOUND
+
+		if (wait_resume_step(client)) {
+			/* need to wait for resume, but also must check for conn drop */
+			continue;
+		}
+
+		if (wait_client_activity(client)) {
+			break;
+		}
+	}
+
+	return OD_OK;
+}
+
 static od_frontend_status_t od_frontend_remote(od_client_t *client)
 {
 	od_route_t *route = client->route;
-	client->cond = machine_cond_create();
+	client->io_cond = machine_cond_create();
 
-	if (client->cond == NULL) {
+	if (client->io_cond == NULL) {
 		return OD_EOOM;
 	}
 
@@ -2696,7 +3172,7 @@ static od_frontend_status_t od_frontend_remote(od_client_t *client)
 #ifdef YB_SUPPORT_FOUND
 	/* enable client notification mechanism */
 	int rc;
-	rc = machine_read_start(client->notify_io, client->cond);
+	rc = machine_read_start(client->notify_io, client->io_cond);
 	if (rc == -1) {
 		return OD_ECLIENT_READ;
 	}
@@ -2704,8 +3180,8 @@ static od_frontend_status_t od_frontend_remote(od_client_t *client)
 	bool reserve_session_server_connection =
 		route->rule->reserve_session_server_connection;
 
-	status = od_relay_start(&client->relay, client->cond, OD_ECLIENT_READ,
-				OD_ESERVER_WRITE,
+	status = od_relay_start(&client->relay, client->io_cond,
+				OD_ECLIENT_READ, OD_ESERVER_WRITE,
 				od_frontend_remote_client_on_read,
 				&route->stats, od_frontend_remote_client,
 				client, reserve_session_server_connection);
@@ -2728,46 +3204,13 @@ static od_frontend_status_t od_frontend_remote(od_client_t *client)
 	}
 
 	for (;;) {
-		for (;;) {
-			if (od_should_drop_connection(client, server)) {
-				/* Odyssey is going to shut down or client conn is dropped
-				* due some idle timeout, we drop the connection  */
-				/* a sort of EAGAIN */
-				status = OD_ECLIENT_READ;
-				break;
-			}
-
-// Disabled the unnecessary logs
-#ifndef YB_SUPPORT_FOUND
-#if OD_DEVEL_LVL != OD_RELEASE_MODE
-			if (server != NULL && server->is_transaction &&
-			    od_server_synchronized(server)) {
-				od_dbg_printf_on_dvl_lvl(
-					1,
-					"here we have idle in transaction: cid %s\n",
-					client->id.id);
-			}
-#endif
-#endif
-			/* one minute */
-			if (machine_cond_wait(client->cond, 60000) == 0) {
-				client->time_last_active = machine_time_us();
-#ifndef YB_SUPPORT_FOUND
-				od_dbg_printf_on_dvl_lvl(
-					1,
-					"change client last active time %lld\n",
-					client->time_last_active);
-#endif
-				break;
-			}
+		/* do not rewrite status if it wasn't OD_OK */
+		od_frontend_status_t wait_status = wait_any_activity(client);
+		if (wait_status != OD_OK) {
+			status = wait_status;
 		}
 
-		if (od_frontend_status_is_err(status))
-			break;
-
-		/* client operations */
-		status = od_frontend_ctl(client);
-		if (status != OD_OK)
+		if (od_frontend_status_is_err(status) || status == OD_STOP)
 			break;
 
 		/* Check for replication lag and reject query if too big */
@@ -2806,7 +3249,7 @@ static od_frontend_status_t od_frontend_remote(od_client_t *client)
 
 			if (instance->config.yb_optimized_session_parameters) {
 				status = yb_od_relay_start_init(
-					&server->relay, client->cond, OD_ESERVER_READ,
+					&server->relay, client->io_cond, OD_ESERVER_READ,
 					OD_ECLIENT_WRITE,
 					od_frontend_remote_server_on_read,
 					&route->stats, od_frontend_remote_server,
@@ -2851,7 +3294,7 @@ static od_frontend_status_t od_frontend_remote(od_client_t *client)
 
 			if (!instance->config.yb_optimized_session_parameters) {
 				status = yb_od_relay_start_init(
-					&server->relay, client->cond, OD_ESERVER_READ,
+					&server->relay, client->io_cond, OD_ESERVER_READ,
 					OD_ECLIENT_WRITE,
 					od_frontend_remote_server_on_read,
 					&route->stats, od_frontend_remote_server,
@@ -2897,8 +3340,7 @@ static od_frontend_status_t od_frontend_remote(od_client_t *client)
 		if (server == NULL)
 			continue;
 
-		status = od_frontend_remote_process_server(server, client,
-							   false);
+		status = od_frontend_remote_process_server(client, false);
 		if (status != OD_OK) {
 			/* should not return this here */
 			assert(status != OD_REQ_SYNC);
@@ -2921,7 +3363,7 @@ static od_frontend_status_t od_frontend_remote(od_client_t *client)
 				od_debug(&instance->logger, "sync-point-await",
 					 client, server, "process await");
 				status = od_frontend_remote_process_server(
-					server, client, true);
+					client, true);
 
 				if (status != OD_OK) {
 					break;
@@ -2934,34 +3376,34 @@ static od_frontend_status_t od_frontend_remote(od_client_t *client)
 				break;
 			}
 
-			// deploy here
+			/* If we have pending parse message, do deploy */
+			if (server->parse_msg != NULL) {
+				/* fill internals structs in */
+				if (od_frontend_deploy_prepared_stmt_msg(
+					    server, &server->relay,
+					    "sync-point-deploy") != OD_OK) {
+					status = OD_ESERVER_WRITE;
+					break;
+				}
 
-			assert(server->parse_msg != NULL);
+				machine_msg_t *msg;
+				msg = kiwi_fe_write_sync(NULL);
+				if (msg == NULL) {
+					status = OD_ESERVER_WRITE;
+					break;
+				}
+				int rc;
+				rc = od_write(&server->io, msg);
+				if (rc == -1) {
+					status = OD_ESERVER_WRITE;
+					break;
+				}
 
-			/* fill internals structs in */
-			if (od_frontend_deploy_prepared_stmt_msg(
-				    server, &server->relay,
-				    "sync-point-deploy") != OD_OK) {
-				status = OD_ESERVER_WRITE;
-				break;
-			}
-
-			machine_msg_t *msg;
-			msg = kiwi_fe_write_sync(NULL);
-			if (msg == NULL) {
-				status = OD_ESERVER_WRITE;
-				break;
-			}
-			int rc;
-			rc = od_write(&server->io, msg);
-			if (rc == -1) {
-				status = OD_ESERVER_WRITE;
-				break;
+				od_server_sync_request(server, 1);
 			}
 
 			/* enter sync point mode */
 			server->sync_point = 1;
-			od_server_sync_request(server, 1);
 
 			for (;;) {
 				if (od_server_synchronized(server)) {
@@ -2972,7 +3414,7 @@ static od_frontend_status_t od_frontend_remote(od_client_t *client)
 				od_debug(&instance->logger, "sync-point",
 					 client, server, "process await");
 				status = od_frontend_remote_process_server(
-					server, client, true);
+					client, true);
 
 				if (status != OD_OK) {
 					break;
@@ -2984,12 +3426,23 @@ static od_frontend_status_t od_frontend_remote(od_client_t *client)
 				break;
 			}
 
-			machine_msg_t *pmsg;
-			pmsg = kiwi_be_write_parse_complete(NULL);
-			if (pmsg == NULL) {
-				return OD_ECLIENT_WRITE;
+			if (server->sync_point_deploy_msg != NULL) {
+				machine_iov_add(server->relay.iov,
+						server->sync_point_deploy_msg);
+				server->sync_point_deploy_msg = NULL;
+
+				/* same as server src */
+				assert(server->relay.src == client->relay.dst);
+
+				/* we enqueued message to servers relay, so notify it. */
+				machine_cond_signal(server->relay.src->on_read);
+				status = od_frontend_remote_process_server(
+					client, true);
+
+				if (status != OD_OK) {
+					break;
+				}
 			}
-			machine_iov_add(server->relay.iov, pmsg);
 		}
 #endif // YB_SUPPORT_FOUND
 		if (status != OD_OK) {
@@ -3199,7 +3652,7 @@ static void od_frontend_cleanup(od_client_t *client, char *context,
 	case OD_ESYNC_BROKEN:
 		od_error(&instance->logger, context, client, server,
 			 "unexpected error status %s (%d)",
-			 od_frontend_status_to_str(status), (uint32)status);
+			 od_frontend_status_to_str(status), (uint32_t)status);
 		od_router_close(router, client);
 		break;
 	case YB_OD_DEPLOY_ERR:
@@ -3217,7 +3670,7 @@ static void od_frontend_cleanup(od_client_t *client, char *context,
 		od_error(
 			&instance->logger, context, client, server,
 			"unexpected error status %s (%d), possible corruption, abort()",
-			od_frontend_status_to_str(status), (uint32)status);
+			od_frontend_status_to_str(status), (uint32_t)status);
 		abort();
 	}
 }

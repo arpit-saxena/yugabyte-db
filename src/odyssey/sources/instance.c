@@ -257,8 +257,10 @@ int od_instance_main(od_instance_t *instance, int argc, char **argv)
 	}
 
 	od_hba_init(&hba);
-	od_global_init(&global, instance, &system, &router, &cron, &worker_pool,
-		       &extensions, &hba);
+	if (od_global_init(&global, instance, &system, &router, &cron,
+			   &worker_pool, &extensions, &hba) != 0) {
+		goto error;
+	}
 
 	/* read config file */
 	od_error_t error;
@@ -359,10 +361,7 @@ int od_instance_main(od_instance_t *instance, int argc, char **argv)
 		goto error;
 	}
 
-	/* configure logger */
-	od_logger_set_format(&instance->logger, instance->config.log_format);
-	od_logger_set_debug(&instance->logger, instance->config.log_debug);
-	od_logger_set_stdout(&instance->logger, instance->config.log_to_stdout);
+	/* YB: od_logger_open() below needs the directory and rotation settings */
 	od_logger_set_dir(&instance->logger, instance->config.log_dir);
 	if (instance->config.log_max_size) {
 		od_logger_set_max_size(&instance->logger, instance->config.log_max_size);
@@ -391,6 +390,11 @@ int od_instance_main(od_instance_t *instance, int argc, char **argv)
 			goto error;
 		}
 	}
+
+	/* configure logger */
+	od_logger_set_format(&instance->logger, instance->config.log_format);
+	od_logger_set_debug(&instance->logger, instance->config.log_debug);
+	od_logger_set_stdout(&instance->logger, instance->config.log_to_stdout);
 
 	/* syslog */
 	if (instance->config.log_syslog) {
@@ -464,7 +468,11 @@ int od_instance_main(od_instance_t *instance, int argc, char **argv)
 		goto error;
 	}
 
-	return machine_wait(system.machine);
+	rc = machine_wait(system.machine);
+
+	od_global_destroy(&global);
+
+	return rc;
 
 error:
 	od_router_free(&router);

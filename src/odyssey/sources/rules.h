@@ -130,6 +130,9 @@ struct od_rule {
 	int catchup_timeout;
 	int catchup_checks;
 
+	/* Should we deploy user GUCS when attaching? */
+	int maintain_params;
+
 	/* group */
 	od_group_t *group; // set if rule is group
 	od_rule_t *group_rule;
@@ -151,6 +154,8 @@ struct od_rule {
 	double *quantiles;
 	int quantiles_count;
 	uint64_t server_lifetime_us;
+
+	od_target_session_attrs_t target_session_attrs;
 
 	/* some settings that we are going to force-on
 	while backend connection acquiring */

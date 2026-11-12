@@ -87,12 +87,17 @@ set(od_libraries "rt")
 list(APPEND od_libraries "yb_util")
 
 # postgresql
+# YB: The YugabyteDB build passes the PostgreSQL paths in; no lookup then
 if("${POSTGRESQL_LIBRARY}" STREQUAL "")
-    find_package(PostgreSQL REQUIRED)
+    find_package(PostgreSQL)
+else()
+    set(POSTGRESQL_FOUND TRUE)
 endif()
 
-set(od_libraries ${od_libraries} ${POSTGRESQL_LIBRARY} ${POSTGRESQL_LIBPGPORT} ${PQ_LIBRARY})
-include_directories(${POSTGRESQL_INCLUDE_DIR})
+if (POSTGRESQL_FOUND)
+	set(od_libraries ${od_libraries} ${POSTGRESQL_LIBRARY} ${POSTGRESQL_LIBPGPORT} ${PQ_LIBRARY})
+	include_directories(${POSTGRESQL_INCLUDE_DIR})
+endif()
 
 set(OPENSSL_INCLUDE_DIR $ENV{OPENSSL_INCLUDE_DIR})
 set(OPENSSL_LIBRARIES $ENV{OPENSSL_LIBRARIES})
@@ -156,6 +161,7 @@ endif()
 
 set(od_libraries ${od_libraries} ${od_prom})
 
+# YB: USE_SCRAM is still read by YB code in sources/auth.c
 #scram
 
 set(USE_SCRAM ON)
@@ -210,11 +216,6 @@ message(STATUS "c lang standard:        ${CLANGCOMPILERSTANDARD}")
 message(STATUS "                                                                          ")
 message(STATUS "CMAKE_BUILD_TYPE:       ${CMAKE_BUILD_TYPE}")
 message(STATUS "BUILD_DEBIAN:           ${BUILD_DEBIAN}")
-message(STATUS "POSTGRESQL_INCLUDE_DIR: ${POSTGRESQL_INCLUDE_DIR}")
-message(STATUS "POSTGRESQL_LIBRARY:     ${POSTGRESQL_LIBRARY}")
-message(STATUS "POSTGRESQL_LIBPGPORT:   ${POSTGRESQL_LIBPGPORT}")
-message(STATUS "PG_VERSION_NUM:         ${PG_VERSION_NUM}")
-message(STATUS "PQ_LIBRARY:             ${PQ_LIBRARY}")
 message(STATUS "USE_BORINGSSL:          ${USE_BORINGSSL}")
 message(STATUS "BORINGSSL_ROOT_DIR:     ${BORINGSSL_ROOT_DIR}")
 message(STATUS "BORINGSSL_INCLUDE_DIR:  ${BORINGSSL_INCLUDE_DIR}")
@@ -228,7 +229,15 @@ if (PAM_FOUND)
     message(STATUS "PAM_INCLUDE_DIR:        ${PAM_INCLUDE_DIR}")
 endif()
 
-message(STATUS "USE_SCRAM:              ${USE_SCRAM}")
+
+message(STATUS "POSTGRESQL_FOUND:       ${POSTGRESQL_FOUND}")
+if (POSTGRESQL_FOUND)
+    message(STATUS "POSTGRESQL_INCLUDE_DIR: ${POSTGRESQL_INCLUDE_DIR}")
+    message(STATUS "POSTGRESQL_LIBRARY:     ${POSTGRESQL_LIBRARY}")
+    message(STATUS "POSTGRESQL_LIBPGPORT:   ${POSTGRESQL_LIBPGPORT}")
+    message(STATUS "PG_VERSION_NUM:         ${PG_VERSION_NUM}")
+    message(STATUS "PQ_LIBRARY:             ${PQ_LIBRARY}")
+endif()
 
 message(STATUS "BUILD_COMPRESSION:      ${BUILD_COMPRESSION}")
 if (BUILD_COMPRESSION)

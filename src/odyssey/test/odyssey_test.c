@@ -13,9 +13,17 @@
 #include <string.h>
 #include <inttypes.h>
 
+#include <kiwi.h>
 #include <machinarium.h>
 #include <odyssey_test.h>
 
+char test_prefix[1024] = { 0 };
+
+/* KIWI */
+extern void kiwi_test_enquote(void);
+extern void kiwi_test_pgoptions(void);
+
+/* MACHINARIUM */
 extern void machinarium_test_init(void);
 extern void machinarium_test_create0(void);
 extern void machinarium_test_create1(void);
@@ -84,17 +92,26 @@ extern void machinarium_test_wait_list_notify_after_wait(void);
 extern void machinarium_test_wait_list_one_producer_multiple_consumers(void);
 extern void
 machinarium_test_wait_list_one_producer_multiple_consumers_threads(void);
+extern void machinarium_test_wait_list_notify_all(void);
+extern void machinarium_test_wait_group(void);
+/* TODO: uncomment me
+extern void machinarium_test_mutex_threads(void);
+extern void machinarium_test_mutex_coroutines(void);
+extern void machinarium_test_mutex_timeout(void);
+*/
 
 extern void odyssey_test_tdigest(void);
 extern void odyssey_test_attribute(void);
 extern void odyssey_test_util(void);
 extern void odyssey_test_lock(void);
 extern void odyssey_test_hba(void);
+extern void odyssey_test_endpoints_parse(void);
 
 int main(int argc, char *argv[])
 {
-	(void)argc;
-	(void)argv;
+	if (argc > 1) {
+		odyssey_test_set_test_prefix(argv[1]);
+	}
 
 	// Normally smth like that is done by odyssey/machinarium itself.
 	// But this test doesn't have signal handlers and
@@ -102,6 +119,8 @@ int main(int argc, char *argv[])
 	// So this SIGPIPE ignoring will fix some tests (like tls unix socket with no msg).
 	signal(SIGPIPE, SIG_IGN);
 
+	odyssey_test(kiwi_test_enquote);
+	odyssey_test(kiwi_test_pgoptions);
 	odyssey_test(machinarium_test_init);
 	odyssey_test(machinarium_test_create0);
 	odyssey_test(machinarium_test_create1);
@@ -171,11 +190,18 @@ int main(int argc, char *argv[])
 		machinarium_test_wait_list_one_producer_multiple_consumers);
 	odyssey_test(
 		machinarium_test_wait_list_one_producer_multiple_consumers_threads);
+	odyssey_test(machinarium_test_wait_list_notify_all);
+	odyssey_test(machinarium_test_wait_group);
+	/* TODO: uncomment me
+	odyssey_test(machinarium_test_mutex_threads);
+	odyssey_test(machinarium_test_mutex_coroutines);
+	odyssey_test(machinarium_test_mutex_timeout);*/
 	odyssey_test(odyssey_test_tdigest);
 	odyssey_test(odyssey_test_attribute);
 	odyssey_test(odyssey_test_util);
 	odyssey_test(odyssey_test_lock);
 	odyssey_test(odyssey_test_hba);
+	odyssey_test(odyssey_test_endpoints_parse);
 
 	return 0;
 }

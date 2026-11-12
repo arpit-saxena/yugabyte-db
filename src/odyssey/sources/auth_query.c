@@ -229,8 +229,8 @@ int od_auth_query(od_client_t *client, char *peer)
 	int rc;
 	if (server->io.io == NULL) {
 		/* acquire new backend connection for auth query */
-		rc = od_backend_connect(server, "auth_query", NULL,
-					auth_client);
+		rc = od_backend_connect_service(server, "auth_query", NULL,
+						auth_client);
 		if (rc == NOT_OK_RESPONSE) {
 			od_debug(&instance->logger, "auth_query", auth_client,
 				 server,
@@ -290,8 +290,9 @@ int od_auth_query(od_client_t *client, char *peer)
 		/* drop previous value */
 		free(cache_value->passwd);
 
-		// there should be cache_value->passwd = NULL for sanity
-		// but this is meaninigless since we assign new value just below
+		/* there should be cache_value->passwd = NULL for sanity
+		* but this is meaninigless since we assign new value just below
+		*/
 	}
 	cache_value->passwd_len = password->password_len;
 	cache_value->passwd = malloc(password->password_len);

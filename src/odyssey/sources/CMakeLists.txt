@@ -14,6 +14,7 @@ set(od_src
     config.c
     config_reader.c
     dns.c
+    endpoints_reader.c
     router.c
     system.c
     cron.c
@@ -58,6 +59,8 @@ set(od_src
     hba_rule.c
     mdb_iamproxy.c
     group.c
+    virtual_processing.c
+    # YB
     yb_auth_passthrough.c
     yb_oid_entry.c)
 
@@ -65,8 +68,8 @@ if (PAM_FOUND)
         list(APPEND od_src pam.c)
 endif()
 
-if (USE_SCRAM)
-        list(APPEND od_src scram.c)
+if (POSTGRESQL_FOUND)
+	list(APPEND od_src scram.c)
 endif()
 
 if (LDAP_FOUND)

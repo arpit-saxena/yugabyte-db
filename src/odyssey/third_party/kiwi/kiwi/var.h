@@ -42,6 +42,7 @@ typedef enum {
 	KIWI_VAR_GP_SESSION_ROLE,
 	/* odyssey own params */
 	KIWI_VAR_ODYSSEY_CATCHUP_TIMEOUT,
+	KIWI_VAR_ODYSSEY_TARGET_SESSION_ATTRS,
 	/* YB: logical client details forwarded by YSQL Connection Manager */
 	KIWI_VAR_YB_CONN_MGR_CLIENT_ADDR,
 	KIWI_VAR_YB_CONN_MGR_CLIENT_PORT,
@@ -347,6 +348,9 @@ static inline void kiwi_vars_init(kiwi_vars_t *vars,
 	kiwi_var_init(&vars->vars[KIWI_VAR_ODYSSEY_CATCHUP_TIMEOUT],
 		      "odyssey_catchup_timeout",
 		      sizeof("odyssey_catchup_timeout"));
+	/* XXX: todo - also accept aliases */
+	kiwi_var_init(&vars->vars[KIWI_VAR_ODYSSEY_TARGET_SESSION_ATTRS],
+		      "target_session_attrs", sizeof("target_session_attrs"));
 #else
 	vars->size = 0;
 	vars->vars = NULL;
@@ -677,7 +681,9 @@ kiwi_vars_cas(kiwi_vars_t *client_session_vars,
 		var = kiwi_vars_of(client_session_vars, type);
 		/* we do not support odyssey-to-backend compression yet */
 		if (var->type == KIWI_VAR_UNDEF ||
-		    var->type == KIWI_VAR_COMPRESSION)
+		    var->type == KIWI_VAR_COMPRESSION ||
+		    var->type ==
+			    KIWI_VAR_ODYSSEY_TARGET_SESSION_ATTRS /* never deploy this one */)
 			continue;
 		kiwi_var_t *server_var;
 		server_var = kiwi_vars_of(server_session_vars, type);

@@ -32,6 +32,7 @@ void od_config_init(od_config_t *config)
 	config->unix_socket_dir = NULL;
 	config->locks_dir = NULL;
 	config->enable_online_restart_feature = 0;
+	config->online_restart_drop_options.drop_enabled = 1;
 	config->bindwith_reuseport = 0;
 	config->graceful_die_on_errors = 0;
 	config->unix_socket_mode = NULL;
@@ -78,6 +79,9 @@ void od_config_init(od_config_t *config)
 	od_list_init(&config->listen);
 
 	config->backend_connect_timeout_ms = 30U * 1000U; // 30 seconds
+	config->virtual_processing = 0;
+
+	memset(config->availability_zone, 0, sizeof(config->availability_zone));
 }
 
 void od_config_reload(od_config_t *current_config, od_config_t *new_config)
@@ -157,6 +161,7 @@ od_config_listen_t *od_config_listen_add(od_config_t *config)
 	listen->port = 6432;
 	listen->backlog = 128;
 	listen->client_login_timeout = 15000;
+	listen->target_session_attrs = OD_TARGET_SESSION_ATTRS_UNDEF;
 
 	od_list_init(&listen->link);
 	od_list_append(&config->listen, &listen->link);
@@ -432,7 +437,7 @@ void od_config_print(od_config_t *config, od_logger_t *logger)
 	       "yb_wait_for_rfq_on_sync        %s",
 	       od_config_yes_no(config->yb_wait_for_rfq_on_sync));
 
-#ifdef USE_SCRAM
+#ifdef POSTGRESQL_FOUND
 	od_log(logger, "config", NULL, NULL, "SCRAM auth method:       OK");
 #endif
 

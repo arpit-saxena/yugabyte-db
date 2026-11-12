@@ -43,16 +43,28 @@ int od_storage_watchdog_free(od_storage_watchdog_t *watchdog);
 /* */
 typedef struct od_storage_endpoint od_storage_endpoint_t;
 
+typedef struct {
+	uint64_t last_update_time_ms;
+	pthread_spinlock_t values_lock;
+	bool is_read_write;
+} od_storage_endpoint_status_t;
+
+void od_storage_endpoint_status_init(od_storage_endpoint_status_t *status);
+void od_storage_endpoint_status_destroy(od_storage_endpoint_status_t *status);
+bool od_storage_endpoint_status_is_outdated(
+	od_storage_endpoint_status_t *status, uint64_t recheck_interval);
+void od_storage_endpoint_status_get(od_storage_endpoint_status_t *status,
+				    od_storage_endpoint_status_t *out);
+void od_storage_endpoint_status_set(od_storage_endpoint_status_t *status,
+				    od_storage_endpoint_status_t *value);
 struct od_storage_endpoint {
 	char *host; /* NULL - terminated */
 	int port; /* TODO: support somehow */
-};
 
-typedef enum {
-	OD_TARGET_SESSION_ATTRS_RW,
-	OD_TARGET_SESSION_ATTRS_RO,
-	OD_TARGET_SESSION_ATTRS_ANY,
-} od_target_session_attrs_t;
+	od_storage_endpoint_status_t status;
+
+	char availability_zone[OD_MAX_AVAILABILITY_ZONE_LENGTH];
+};
 
 typedef struct od_auth_cache_value od_auth_cache_value_t;
 struct od_auth_cache_value {
@@ -76,14 +88,14 @@ struct od_rule_storage {
 	char *host; /* host or host,host or [host]:port[,host...] */
 	int port; /* default port */
 
-	od_target_session_attrs_t target_session_attrs;
-
 	int server_max_routing;
 	od_storage_watchdog_t *watchdog;
 
 	od_hashmap_t *acache;
 
 	od_list_t link;
+
+	int endpoints_status_poll_interval_ms;
 };
 
 /* storage API */

@@ -9,6 +9,52 @@
 #include <machinarium.h>
 #include <odyssey.h>
 
+void od_storage_endpoint_status_init(od_storage_endpoint_status_t *status)
+{
+	status->last_update_time_ms = 0ULL;
+	status->is_read_write = true;
+	pthread_spin_init(&status->values_lock, PTHREAD_PROCESS_PRIVATE);
+}
+
+void od_storage_endpoint_status_destroy(od_storage_endpoint_status_t *status)
+{
+	pthread_spin_destroy(&status->values_lock);
+}
+
+bool od_storage_endpoint_status_is_outdated(
+	od_storage_endpoint_status_t *status, uint64_t recheck_interval)
+{
+	pthread_spin_lock(&status->values_lock);
+
+	uint64_t last_update_time_ms = status->last_update_time_ms;
+
+	pthread_spin_unlock(&status->values_lock);
+
+	return (machine_time_ms() - last_update_time_ms) > recheck_interval;
+}
+
+void od_storage_endpoint_status_get(od_storage_endpoint_status_t *status,
+				    od_storage_endpoint_status_t *out)
+{
+	pthread_spin_lock(&status->values_lock);
+
+	out->last_update_time_ms = status->last_update_time_ms;
+	out->is_read_write = status->is_read_write;
+
+	pthread_spin_unlock(&status->values_lock);
+}
+
+void od_storage_endpoint_status_set(od_storage_endpoint_status_t *status,
+				    od_storage_endpoint_status_t *value)
+{
+	pthread_spin_lock(&status->values_lock);
+
+	status->last_update_time_ms = value->last_update_time_ms;
+	status->is_read_write = value->is_read_write;
+
+	pthread_spin_unlock(&status->values_lock);
+}
+
 od_storage_watchdog_t *od_storage_watchdog_allocate(od_global_t *global)
 {
 	od_storage_watchdog_t *watchdog;
@@ -82,7 +128,7 @@ od_rule_storage_t *od_rules_storage_allocate(void)
 		free(storage);
 		return NULL;
 	}
-	storage->target_session_attrs = OD_TARGET_SESSION_ATTRS_ANY;
+	storage->endpoints_status_poll_interval_ms = 1000;
 	storage->rr_counter = 0;
 
 #define OD_STORAGE_DEFAULT_HASHMAP_SZ 420u
@@ -112,6 +158,8 @@ void od_rules_storage_free(od_rule_storage_t *storage)
 
 	if (storage->endpoints_count) {
 		for (size_t i = 0; i < storage->endpoints_count; ++i) {
+			od_storage_endpoint_status_destroy(
+				&storage->endpoints[i].status);
 			free(storage->endpoints[i].host);
 		}
 
@@ -192,12 +240,12 @@ od_rule_storage_t *od_rules_storage_copy(od_rule_storage_t *storage)
 				goto error;
 			}
 			copy->endpoints[i].port = storage->endpoints[i].port;
+			od_storage_endpoint_status_init(
+				&copy->endpoints[i].status);
 		}
 	}
 
 	/* storage auth cache not copied */
-
-	copy->target_session_attrs = storage->target_session_attrs;
 
 	return copy;
 error:
@@ -370,8 +418,8 @@ od_storage_create_and_connect_watchdog_client(od_storage_watchdog_t *watchdog)
 	/* connect to server, if necessary */
 	if (server->io.io == NULL) {
 		int rc;
-		rc = od_backend_connect(server, "watchdog", NULL,
-					watchdog_client);
+		rc = od_backend_connect_service(server, "watchdog", NULL,
+						watchdog_client);
 		if (rc == NOT_OK_RESPONSE) {
 			od_debug(&instance->logger, "watchdog", watchdog_client,
 				 server, "backend connect failed");

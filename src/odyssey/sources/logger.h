@@ -78,6 +78,7 @@ static inline void od_logger_set_rotate_interval(od_logger_t *logger, int rotate
 extern int od_logger_open(od_logger_t *);
 extern int od_logger_reopen(od_logger_t *);
 extern int od_logger_open_syslog(od_logger_t *, char *, char *);
+extern void od_logger_shutdown(od_logger_t *);
 extern void od_logger_close(od_logger_t *);
 extern void od_logger_write(od_logger_t *, od_logger_level_t, char *, void *,
 			    void *, char *, va_list)

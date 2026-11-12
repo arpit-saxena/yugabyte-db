@@ -7,10 +7,14 @@ CMAKE_BIN:=cmake
 
 SKIP_CLEANUP_DOCKER:=
 
-CMAKE_FLAGS:=-DCC_FLAGS="-Wextra -Wstrict-aliasing" -DUSE_SCRAM=YES
+CMAKE_FLAGS:=-DCC_FLAGS="-Wextra -Wstrict-aliasing"
 BUILD_TYPE=Release
 
 DEV_CONF=./config-examples/odyssey-dev.conf
+
+ODYSSEY_BUILD_TYPE ?= build_release
+ODYSSEY_TEST_CODENAME ?= noble
+ODYSSEY_TEST_POSTGRES_VERSION ?= 17
 
 CONCURRENCY:=1
 OS:=$(shell uname -s)
@@ -29,7 +33,7 @@ clean:
 	rm -fr $(BUILD_TEST_ASAN_DIR)
 
 local_build: clean
-	+$(CMAKE_BIN) -S $(ODY_DIR) -B$(BUILD_TEST_DIR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) $(CMAKE_FLAGS)
+	+$(CMAKE_BIN) -B$(BUILD_TEST_DIR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE) $(CMAKE_FLAGS)
 	+make -C$(BUILD_TEST_DIR) -j$(CONCURRENCY)
 
 local_run: 
@@ -59,23 +63,10 @@ build_release:
 build_dbg:
 	rm -rf $(BUILD_TEST_DIR)
 	mkdir -p $(BUILD_TEST_DIR)
-	cd $(BUILD_TEST_DIR) && $(CMAKE_BIN) .. -DCMAKE_BUILD_TYPE=Debug -DUSE_SCRAM=YES && make -j$(CONCURRENCY)
+	cd $(BUILD_TEST_DIR) && $(CMAKE_BIN) .. -DCMAKE_BUILD_TYPE=Debug && make -j$(CONCURRENCY)
 
 gdb: build_dbg
 	gdb --args ./build/sources/odyssey $(DEV_CONF)  --verbose --console --log_to_stdout
-
-run_test:
-	# change dir, test would not work with absolute path
-	./cleanup-docker.sh
-	ODYSSEY_TEST_BUILD_TYPE=build_release docker compose -f ./docker-compose-test.yml up --exit-code-from odyssey
-
-run_test_asan:
-	./cleanup-docker.sh
-	ODYSSEY_TEST_BUILD_TYPE=build_asan docker compose -f ./docker-compose-test.yml up --exit-code-from odyssey
-
-run_test_dbg:
-	./cleanup-docker.sh
-	ODYSSEY_TEST_BUILD_TYPE=build_dbg docker compose -f ./docker-compose-test.yml up --exit-code-from odyssey
 
 submit-cov:
 	mkdir cov-build && cd cov-build
@@ -104,6 +95,48 @@ package-jammy:
 install:
 	install -D build/sources/odyssey $(DESTDIR)/usr/bin/odyssey
 
-start-dev-env:
-	docker compose build dev
-	docker compose up -d dev
+dev_run: format local_build console_run
+
+start-dev-env-release:
+	docker compose down || true
+	ODYSSEY_FUNCTIONAL_BUILD_TYPE=build_release \
+	ODYSSEY_TEST_TARGET=dev-env \
+	docker compose -f ./docker/functional/docker-compose.yml up --force-recreate --build -d
+
+start-dev-env-dbg:
+	docker compose down || true
+	ODYSSEY_FUNCTIONAL_BUILD_TYPE=build_dbg \
+	ODYSSEY_TEST_TARGET=dev-env \
+	docker compose -f ./docker/functional/docker-compose.yml up --force-recreate --build -d
+
+start-dev-env-asan:
+	docker compose down || true
+	ODYSSEY_FUNCTIONAL_BUILD_TYPE=build_asan \
+	ODYSSEY_TEST_TARGET=dev-env \
+	docker compose -f ./docker/functional/docker-compose.yml up --force-recreate --build -d
+
+functional-test:
+	ODYSSEY_FUNCTIONAL_BUILD_TYPE=$(ODYSSEY_BUILD_TYPE) \
+	ODYSSEY_TEST_TARGET=functional-entrypoint \
+	ODYSSEY_FUNCTIONAL_TESTS_SELECTOR="$(ODYSSEY_TEST_SELECTOR)" \
+	docker compose -f ./docker/functional/docker-compose.yml up --exit-code-from odyssey --build
+
+ci-unittests:
+	docker build \
+		-f ./docker/unit/Dockerfile \
+		--build-arg build_type=$(ODYSSEY_BUILD_TYPE) \
+		--tag=odyssey/unit-test-runner .
+	docker run odyssey/unit-test-runner
+
+ci-build-check-ubuntu:
+	docker build \
+		-f docker/build-test/Dockerfile.ubuntu \
+		--build-arg codename=$(ODYSSEY_TEST_CODENAME) \
+		--build-arg postgres_version=$(ODYSSEY_TEST_POSTGRES_VERSION) \
+		--tag=odyssey/$(ODYSSEY_TEST_CODENAME)-pg$(ODYSSEY_TEST_POSTGRES_VERSION)-builder .
+	docker run -e ODYSSEY_BUILD_TYPE=$(ODYSSEY_BUILD_TYPE) odyssey/$(ODYSSEY_TEST_CODENAME)-pg$(ODYSSEY_TEST_POSTGRES_VERSION)-builder
+
+ci-build-check-fedora:
+	docker build \
+		-f docker/build-test/Dockerfile.fedora \
+		--tag=odyssey/fedora-img .

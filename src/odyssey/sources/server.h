@@ -17,7 +17,7 @@ typedef enum {
 
 struct od_server {
 	od_server_state_t state;
-#ifdef USE_SCRAM
+#ifdef POSTGRESQL_FOUND
 	od_scram_state_t scram_state;
 #endif
 	od_id_t id;
@@ -73,6 +73,10 @@ struct od_server {
 	/* allocated prepared statements ids */
 	od_hashmap_t *prep_stmts;
 	int sync_point;
+	machine_msg_t *sync_point_deploy_msg;
+
+	int bind_failed;
+
 	/* YB: LRU list and count of prep stmts */
 	od_list_t yb_prep_stmt_lru;
 	int yb_prep_stmt_count;
@@ -158,12 +162,14 @@ static inline void od_server_init(od_server_t *server, int reserve_prep_stmts)
 	server->sync_request = 0;
 	server->sync_reply = 0;
 	server->sync_point = 0;
+	server->sync_point_deploy_msg = NULL;
 	server->parse_msg = NULL;
 	server->init_time_us = machine_time_us();
 	server->error_connect = NULL;
 	server->offline = 0;
 	server->synced_settings = false;
 	server->endpoint_selector = 0;
+	server->bind_failed = 0;
 	od_stat_state_init(&server->stats_state);
 	server->yb_sticky_connection = false;
 	server->yb_replication_connection = false;
@@ -175,7 +181,7 @@ static inline void od_server_init(od_server_t *server, int reserve_prep_stmts)
 	server->yb_expiry_time_us = UINT64_MAX;
 	server->yb_has_unsynced_pending_packets = false;
 
-#ifdef USE_SCRAM
+#ifdef POSTGRESQL_FOUND
 	od_scram_state_init(&server->scram_state);
 #endif
 

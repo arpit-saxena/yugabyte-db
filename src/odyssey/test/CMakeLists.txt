@@ -2,6 +2,8 @@
 set(od_test_binary odyssey_test)
 set(od_test_src
     odyssey_test.c
+    kiwi/test_kiwi_enquote.c
+    kiwi/test_kiwi_pgoptions.c
     machinarium/test_init.c
     machinarium/test_create0.c
     machinarium/test_create1.c
@@ -45,6 +47,8 @@ set(od_test_src
     machinarium/test_wait_list_notify_after_wait.c
     machinarium/test_wait_list_one_producer_multiple_consumers.c
     machinarium/test_wait_list_one_producer_multiple_consumers_threads.c
+    machinarium/test_wait_list_notify_all.c
+    machinarium/test_wait_group.c
     machinarium/test_getaddrinfo0.c
     machinarium/test_getaddrinfo1.c
     machinarium/test_getaddrinfo2.c
@@ -54,6 +58,9 @@ set(od_test_src
     machinarium/test_client_server_unix_socket.c
     machinarium/test_client_server_unix_socket_no_msg.c
     machinarium/test_coroutine_names.c
+    machinarium/test_mutex_threads.c
+    machinarium/test_mutex_coroutines.c
+    machinarium/test_mutex_timeout.c
     machinarium/test_read_10mb0.c
     machinarium/test_read_10mb1.c
     machinarium/test_read_10mb2.c
@@ -73,15 +80,18 @@ set(od_test_src
         ../sources/util.h
         ../sources/build.h
         ../sources/debugprintf.h
+        ../sources/misc.c
         ../sources/address.c
         ../sources/hba.c
         ../sources/hba_rule.c
         ../sources/hba_reader.c
+        ../sources/endpoints_reader.c
         odyssey/test_attribute.c
         odyssey/test_tdigest.c
         odyssey/test_util.c
         odyssey/test_locks.c
         odyssey/test_hba_parse.c
+        odyssey/test_endpoints_parse.c
    )
 
 file(COPY machinarium/ca.crt DESTINATION machinarium)

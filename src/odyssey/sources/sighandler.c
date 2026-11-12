@@ -1,7 +1,10 @@
+/*
+ * Odyssey.
+ *
+ * Scalable PostgreSQL connection pooler.
+ */
 
-
-#include "sighandler.h"
-#include "system.h"
+#include <odyssey.h>
 
 #include <sys/ipc.h>
 #include <sys/shm.h>
@@ -144,6 +147,11 @@ od_attribute_noreturn() void od_system_shutdown(od_system_t *system,
 	/* stop machinaruim and free */
 	od_instance_free(instance);
 #endif
+#ifndef YB_SUPPORT_FOUND
+	od_logger_shutdown(&instance->logger);
+
+	exit(0);
+#else // YB_SUPPORT_FOUND
 	/* YB: Give the logger thread a chance to flush queued log lines */
 	machine_sleep(1);
 
@@ -155,6 +163,7 @@ od_attribute_noreturn() void od_system_shutdown(od_system_t *system,
 	 * handlers.
 	 */
 	_exit(0);
+#endif // YB_SUPPORT_FOUND
 }
 
 void od_system_signal_handler(void *arg)

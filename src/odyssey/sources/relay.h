@@ -322,6 +322,8 @@ od_relay_process(od_relay_t *relay, int *progress, char *data, int size)
 	/* on packet start */
 	int rc;
 	if (relay->packet == 0) {
+		/* If we are parsing beginning of next package, there should be no delayed packet*/
+		assert(relay->packet_full == NULL);
 		if (size < (int)sizeof(kiwi_header_t))
 			return OD_UNDEF;
 
@@ -538,24 +540,50 @@ static inline od_frontend_status_t od_relay_step(od_relay_t *relay,
 	retstatus = OD_OK;
 	int rc;
 #ifndef YB_SUPPORT_FOUND
-	rc = await_read ?
-		     (machine_cond_wait(relay->src->on_read, UINT32_MAX) == 0) :
-		     machine_cond_try(relay->src->on_read);
-	if (rc || od_relay_data_pending(relay)) {
-#else // YB_SUPPORT_FOUND
-	if (machine_cond_try(relay->src->on_read)) {
-#endif // YB_SUPPORT_FOUND
+	int should_try_read;
+	int pending;
+	should_try_read = await_read ? (machine_cond_wait(relay->src->on_read,
+							  UINT32_MAX) == 0) :
+				       machine_cond_try(relay->src->on_read);
+
+	pending = od_relay_data_pending(relay);
+	if (should_try_read || pending) {
 		if (relay->dst == NULL) {
 			/* signal to retry on read logic */
 			machine_cond_signal(relay->src->on_read);
 			return OD_ATTACH;
 		}
 
-#ifndef YB_SUPPORT_FOUND
 		rc = od_relay_read_pending_aware(relay);
+		if (rc != OD_OK)
+			return rc;
+	}
+
+	rc = od_relay_pipeline(relay);
+
+	if (rc == OD_REQ_SYNC) {
+		retstatus = OD_REQ_SYNC;
+	} else if (rc != OD_OK)
+		return rc;
+
+	if (should_try_read || pending) {
+		if (machine_iov_pending(relay->iov)) {
+			/* try to optimize write path and handle it right-away */
+			machine_cond_signal(relay->dst->on_write);
+		} else {
+			od_readahead_reuse(&relay->src->readahead);
+		}
+	}
 #else // YB_SUPPORT_FOUND
+	/* YB: Only a read event starts a read and a pipeline run */
+	if (machine_cond_try(relay->src->on_read)) {
+		if (relay->dst == NULL) {
+			/* signal to retry on read logic */
+			machine_cond_signal(relay->src->on_read);
+			return OD_ATTACH;
+		}
+
 		rc = od_relay_read(relay);
-#endif // YB_SUPPORT_FOUND
 		if (rc != OD_OK)
 			return rc;
 
@@ -587,6 +615,7 @@ static inline od_frontend_status_t od_relay_step(od_relay_t *relay,
 			od_readahead_reuse(&relay->src->readahead);
 		}
 	}
+#endif // YB_SUPPORT_FOUND
 
 	if (relay->dst == NULL)
 		return retstatus;
