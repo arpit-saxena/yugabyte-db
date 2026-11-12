@@ -106,6 +106,9 @@ include_directories("${PROJECT_BINARY_DIR}/")
 include_directories("${PROJECT_SOURCE_DIR}/test")
 include_directories("${PROJECT_BINARY_DIR}/test")
 
+# YB: The test uses kiwi_vars_get(), which YB builds do not have
+list(REMOVE_ITEM od_test_src kiwi/test_kiwi_pgoptions.c)
+
 add_executable(${od_test_binary} ${od_test_src})
 add_dependencies(${od_test_binary} build_libs ${od_binary})
 

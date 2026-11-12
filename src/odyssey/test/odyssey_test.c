@@ -21,7 +21,9 @@ char test_prefix[1024] = { 0 };
 
 /* KIWI */
 extern void kiwi_test_enquote(void);
+#ifndef YB_SUPPORT_FOUND
 extern void kiwi_test_pgoptions(void);
+#endif // YB_SUPPORT_FOUND
 
 /* MACHINARIUM */
 extern void machinarium_test_init(void);
@@ -120,7 +122,9 @@ int main(int argc, char *argv[])
 	signal(SIGPIPE, SIG_IGN);
 
 	odyssey_test(kiwi_test_enquote);
+#ifndef YB_SUPPORT_FOUND
 	odyssey_test(kiwi_test_pgoptions);
+#endif // YB_SUPPORT_FOUND
 	odyssey_test(machinarium_test_init);
 	odyssey_test(machinarium_test_create0);
 	odyssey_test(machinarium_test_create1);
