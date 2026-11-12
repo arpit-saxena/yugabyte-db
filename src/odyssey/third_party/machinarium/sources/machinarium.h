@@ -1,5 +1,4 @@
-#ifndef MACHINARIUM_H
-#define MACHINARIUM_H
+#pragma once
 
 /*
  * machinarium.
@@ -379,5 +378,3 @@ MACHINE_API void machine_mutex_unlock(machine_mutex_t *mutex);
 #ifdef __cplusplus
 }
 #endif
-
-#endif /* MACHINARIUM_H */

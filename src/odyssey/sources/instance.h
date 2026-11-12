@@ -1,5 +1,4 @@
-#ifndef ODYSSEY_INSTANCE_H
-#define ODYSSEY_INSTANCE_H
+#pragma once
 
 /*
  * Odyssey.
@@ -33,5 +32,3 @@ int od_instance_main(od_instance_t *, int, char **);
  * in case the parent process (yb-tserver) dies.
  */
 void YbSetParentDeathSignal();
-
-#endif /* ODYSSEY_INSTANCE_H */

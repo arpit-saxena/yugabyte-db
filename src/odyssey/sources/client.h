@@ -1,5 +1,4 @@
-#ifndef ODYSSEY_CLIENT_H
-#define ODYSSEY_CLIENT_H
+#pragma once
 
 /*
  * Odyssey.
@@ -317,5 +316,3 @@ static inline void od_client_kill(od_client_t *client)
 	od_client_notify(client);
 #endif // YB_SUPPORT_FOUND
 }
-
-#endif /* ODYSSEY_CLIENT_H */

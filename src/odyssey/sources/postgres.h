@@ -1,5 +1,4 @@
-#ifndef ODYSSEY_POSTGRES_H
-#define ODYSSEY_POSTGRES_H
+#pragma once
 
 /*
  * Odyssey.
@@ -33,5 +32,3 @@
 #endif
 
 #include <common/pg_yb_conn_mgr_protocol.h>
-
-#endif /* ODYSSEY_POSTGRES_H */

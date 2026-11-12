@@ -1,5 +1,4 @@
-#ifndef ODYSSEY_ROUTER_H
-#define ODYSSEY_ROUTER_H
+#pragma once
 
 /*
  * Odyssey.
@@ -90,5 +89,3 @@ void yb_od_router_expire_stale_lcv_servers(od_router_t *router,
 bool yb_try_claim_backend_slot(od_router_t *router);
 void yb_force_claim_backend_slot(od_router_t *router);
 void yb_release_backend_slot(od_router_t *router);
-
-#endif /* ODYSSEY_ROUTER_H */

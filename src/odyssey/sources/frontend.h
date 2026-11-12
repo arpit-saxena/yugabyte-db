@@ -1,5 +1,4 @@
-#ifndef ODYSSEY_FRONTEND_H
-#define ODYSSEY_FRONTEND_H
+#pragma once
 
 /*
  * Odyssey.
@@ -139,5 +138,3 @@ extern int yb_execute_on_control_connection(od_client_t *,
 extern int yb_auth_via_auth_backend(od_client_t *client);
 extern int yb_drain_parse_queue_till_sync(od_server_t *server,
 					  od_client_t *client);
-
-#endif /* ODYSSEY_FRONTEND_H */

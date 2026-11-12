@@ -1,8 +1,8 @@
+#pragma once
+
+/* YB */
 #include <string.h>
 #include <stdlib.h>
-
-#ifndef KIWI_VAR_H
-#define KIWI_VAR_H
 
 /*
  * kiwi.
@@ -709,5 +709,3 @@ kiwi_vars_cas(kiwi_vars_t *client_session_vars,
 
 	return pos;
 }
-
-#endif /* KIWI_VAR_H */

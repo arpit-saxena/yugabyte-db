@@ -1,5 +1,4 @@
-#ifndef ODYSSEY_INTERNAL_CLIENT_H
-#define ODYSSEY_INTERNAL_CLIENT_H
+#pragma once
 
 /*
  * Odyssey.
@@ -55,5 +54,3 @@ static inline od_client_t *od_client_allocate_internal(od_global_t *global,
 
 	return internal_client;
 }
-
-#endif /* ODYSSEY_INTERNAL_CLIENT_H */

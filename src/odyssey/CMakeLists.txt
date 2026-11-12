@@ -7,7 +7,7 @@ add_extra_yb_flags_in_odyssey()
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH}
     ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
-set(CLANGCOMPILERSTANDART gnu11)
+set(CMAKE_C_STANDARD 23)
 
 set(OD_VERSION_GIT $ENV{VERSION})
 if ("${OD_VERSION_GIT}" STREQUAL "")
@@ -59,15 +59,15 @@ endif()
 # YB: Upper case build types; flags are appended to the YugabyteDB flags
 string(TOUPPER "${CMAKE_BUILD_TYPE}" CMAKE_BUILD_TYPE)
 if ("${CMAKE_BUILD_TYPE}" STREQUAL "RELEASE")
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=${CLANGCOMPILERSTANDART} -pedantic -Wall -Wextra -Werror -Wstrict-aliasing -g -O2 -pthread -D_GNU_SOURCE")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -pedantic -Wall -Wextra -Werror -Wstrict-aliasing -g -O2 -pthread -D_GNU_SOURCE")
         set(OD_DEVEL_LVL -1)
 elseif("${CMAKE_BUILD_TYPE}" STREQUAL "DEBUG")
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=${CLANGCOMPILERSTANDART} -pedantic -Wall -Wextra -Werror -Wstrict-aliasing -g -O0 -pthread -D_GNU_SOURCE")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -pedantic -Wall -Wextra -Werror -Wstrict-aliasing -g -O0 -pthread -D_GNU_SOURCE")
         set(OD_DEVEL_LVL 1)
 elseif("${CMAKE_BUILD_TYPE}" STREQUAL "ASAN")
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=${CLANGCOMPILERSTANDART} -g -fsanitize=address,undefined,leak -fno-sanitize-recover=all -fno-omit-frame-pointer -pedantic -Werror -Wall -Wextra -Wstrict-aliasing -g -O0 -pthread -D_GNU_SOURCE")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -g -fsanitize=address,undefined,leak -fno-sanitize-recover=all -fno-omit-frame-pointer -pedantic -Werror -Wall -Wextra -Wstrict-aliasing -g -O0 -pthread -D_GNU_SOURCE")
 elseif("${CMAKE_BUILD_TYPE}" STREQUAL "TSAN")
-        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=${CLANGCOMPILERSTANDART} -g -fsanitize=thread -fno-sanitize-recover=all -fno-omit-frame-pointer -pedantic -Wall -Werror -Wextra -Wstrict-aliasing -g -O0 -pthread -D_GNU_SOURCE")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -g -fsanitize=thread -fno-sanitize-recover=all -fno-omit-frame-pointer -pedantic -Wall -Werror -Wextra -Wstrict-aliasing -g -O0 -pthread -D_GNU_SOURCE")
 endif()
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${CC_FLAGS}")

@@ -1,5 +1,4 @@
-#ifndef ODYSSEY_IO_H
-#define ODYSSEY_IO_H
+#pragma once
 
 /*
  * Odyssey.
@@ -304,5 +303,3 @@ static inline int od_write(od_io_t *io, machine_msg_t **msg)
 	*msg = NULL;
 	return rc;
 }
-
-#endif /* ODYSSEY_IO_H */

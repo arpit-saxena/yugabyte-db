@@ -1,5 +1,4 @@
-#ifndef ODYSSEY_UTIL_H
-#define ODYSSEY_UTIL_H
+#pragma once
 
 /*
  * Odyssey.
@@ -117,5 +116,3 @@ static inline bool yb_od_streq(const char *s1, size_t s1_len,
 
 	return strncmp(s1, s2, s1_len) == 0;
 }
-
-#endif /* ODYSSEY_UTIL_H */

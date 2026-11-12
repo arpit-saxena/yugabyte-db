@@ -1,5 +1,4 @@
-#ifndef ODYSSEY_CONFIG_READER_H
-#define ODYSSEY_CONFIG_READER_H
+#pragma once
 
 /*
  * Odyssey.
@@ -52,5 +51,3 @@ error:
 
 bool od_config_reader_keyword(od_config_reader_t *reader,
 			      od_keyword_t *keyword);
-
-#endif /* ODYSSEY_CONFIG_READER_H */

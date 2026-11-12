@@ -1,5 +1,4 @@
-#ifndef KIWI_IO_H
-#define KIWI_IO_H
+#pragma once
 
 /*
  * kiwi.
@@ -191,5 +190,3 @@ KIWI_API static inline int kiwi_validate_header(char *data, uint32_t data_size,
 
 	return 0;
 }
-
-#endif /* KIWI_IO_H */

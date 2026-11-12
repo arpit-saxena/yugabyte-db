@@ -4,7 +4,7 @@ project(machinarium C)
 
 add_extra_yb_flags_in_odyssey()
 
-set(CLANGCOMPILERSTANDART gnu11)
+set(CMAKE_C_STANDARD 23)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH}
     ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
@@ -20,11 +20,11 @@ endif()
 string(TOUPPER "${CMAKE_BUILD_TYPE}" CMAKE_BUILD_TYPE)
 
 if ("${CMAKE_BUILD_TYPE}" STREQUAL "RELEASE")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=${CLANGCOMPILERSTANDART} -fPIC -g -O2 -D_GNU_SOURCE -pthread -pedantic ")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC -g -O2 -D_GNU_SOURCE -pthread -pedantic ")
 elseif("${CMAKE_BUILD_TYPE}" STREQUAL "DEBUG")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=${CLANGCOMPILERSTANDART} -fPIC -g -O0 -D_GNU_SOURCE -pthread -pedantic ")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC -g -O0 -D_GNU_SOURCE -pthread -pedantic ")
 elseif("${CMAKE_BUILD_TYPE}" STREQUAL "ASAN")
-    set(CMAKE_C_FLAGS "-std=${CLANGCOMPILERSTANDART} -fPIC -g -O0 -D_GNU_SOURCE -pthread -pedantic -fsanitize=address,undefined,leak -fno-sanitize-recover=all")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC -g -O0 -D_GNU_SOURCE -pthread -pedantic -fsanitize=address,undefined,leak -fno-sanitize-recover=all")
 endif()
 
 include_directories("${PROJECT_SOURCE_DIR}/sources")

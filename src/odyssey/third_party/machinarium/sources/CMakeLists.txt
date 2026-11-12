@@ -1,4 +1,4 @@
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Werror")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Werror -Wstrict-aliasing")
 
 set(machine_library machinarium)
 set(machine_src
@@ -54,6 +54,19 @@ set(machine_src
     # yb_pg_tls_link_support.h, which in turn reads mm_io_t/mm_tls_t internals,
     # so the two archives would be mutually undefined.
     ${YB_SRC_ROOT}/src/postgres/src/backend/libpq/be-secure-openssl.c)
+
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+    set_property(SOURCE context_swap_x64.S PROPERTY LANGUAGE C)
+    list(APPEND machine_src context_swap_x64.S)
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86|i.86")
+    set_property(SOURCE context_swap_x32.S PROPERTY LANGUAGE C)
+    list(APPEND machine_src context_swap_x32.S)
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|aarch64")
+    set_property(SOURCE context_swap_aarch64.S PROPERTY LANGUAGE C)
+    list(APPEND machine_src context_swap_aarch64.S)
+else()
+    message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR}")
+endif()
 
 add_library(machine_library_static STATIC ${machine_src})
 set_target_properties(machine_library_static PROPERTIES OUTPUT_NAME ${machine_library})

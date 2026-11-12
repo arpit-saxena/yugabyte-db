@@ -1,6 +1,5 @@
 
-#ifndef MM_C_H
-#define MM_C_H
+#pragma once
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -21,5 +20,3 @@
 
 #include <netdb.h>
 #include <errno.h>
-
-#endif // MM_C_H

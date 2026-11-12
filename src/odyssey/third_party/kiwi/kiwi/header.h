@@ -1,5 +1,4 @@
-#ifndef KIWI_HEADER_H
-#define KIWI_HEADER_H
+#pragma once
 
 /*
  * kiwi.
@@ -215,5 +214,3 @@ static inline char *kiwi_be_type_to_string(int type)
 	}
 	return "Unknown";
 }
-
-#endif /* KIWI_HEADER_H */

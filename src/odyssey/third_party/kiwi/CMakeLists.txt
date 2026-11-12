@@ -4,18 +4,19 @@ project(kiwi C)
 
 add_extra_yb_flags_in_odyssey()
 
-set(CLANGCOMPILERSTANDART gnu11)
+set(CMAKE_C_STANDARD 23)
 
 if ("${CMAKE_BUILD_TYPE}" STREQUAL "")
     set(CMAKE_BUILD_TYPE "Debug")
 endif()
 
+# YB: Upper case build types
 string(TOUPPER "${CMAKE_BUILD_TYPE}" CMAKE_BUILD_TYPE)
 
 if ("${CMAKE_BUILD_TYPE}" STREQUAL "RELEASE")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=${CLANGCOMPILERSTANDART} -Wall -Wextra -fPIC -g -O2 -pedantic ")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -fPIC -g -O2 -pedantic -Werror -Wstrict-aliasing ")
 elseif("${CMAKE_BUILD_TYPE}" STREQUAL "DEBUG")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=${CLANGCOMPILERSTANDART} -Wall -Wextra -fPIC -g -O0 -pedantic ")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -fPIC -g -O0 -pedantic -Werror -Wstrict-aliasing")
 endif()
 
 include_directories("${PROJECT_SOURCE_DIR}/")

@@ -1,5 +1,4 @@
-#ifndef ODYSSEY_H
-#define ODYSSEY_H
+#pragma once
 
 /*
  * Odyssey.
@@ -186,5 +185,3 @@ void setTCMallocSamplePeriod(uint64_t sample_period_bytes);
 bool yb_tcmalloc_gc_if_needed(void);
 
 #endif /* YB_GOOGLE_TCMALLOC */
-
-#endif /* ODYSSEY_H */

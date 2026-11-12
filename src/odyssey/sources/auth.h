@@ -1,5 +1,4 @@
-#ifndef ODYSSEY_AUTH_H
-#define ODYSSEY_AUTH_H
+#pragma once
 
 /*
  * Odyssey.
@@ -37,5 +36,3 @@ static inline char *yb_authtype_to_string(yb_od_authtype_t type) {
             return "Unknown";
     }
 }
-
-#endif /* ODYSSEY_AUTH_H */
