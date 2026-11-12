@@ -3213,6 +3213,14 @@ static od_frontend_status_t od_frontend_remote(od_client_t *client)
 		if (od_frontend_status_is_err(status) || status == OD_STOP)
 			break;
 
+#ifdef YB_SUPPORT_FOUND
+		/* YB: A kill is handled before any relay step */
+		if (od_frontend_ctl(client) != OD_OK) {
+			status = OD_STOP;
+			break;
+		}
+#endif // YB_SUPPORT_FOUND
+
 		/* Check for replication lag and reject query if too big */
 		od_frontend_status_t catchup_status =
 			od_frontend_check_replica_catchup(instance, client);
